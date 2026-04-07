@@ -341,38 +341,37 @@ function jsonpCall(url, cbName){
   });
 }
 
-// POST fetch (funciona desde https://)
-async function fetchPost(url, body){
-  const resp = await fetch(url, {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify(body),
-    redirect: 'follow'
-  });
-  try { return await resp.json(); } catch(e) { return {ok:true}; }
+async function postSection(sheet, data){
+  try {
+    await fetch(APPS_SCRIPT_URL, {
+      method:'POST', mode:'no-cors',
+      headers:{'Content-Type':'text/plain'},
+      body: JSON.stringify({action:'saveSection', sheet, data})
+    });
+    await new Promise(r=>setTimeout(r,300));
+  } catch(e){ console.warn('Error guardando '+sheet, e); }
 }
 
 async function gsCall(action, data){
   if(action === 'saveAll'){
-    // Guardar cada sección por separado via POST
-    const secciones = [
-      {key:'db',           val: data.db},
-      {key:'seguimientos', val: data.seguimientos},
-      {key:'folios',       val: data.folios},
-      {key:'finiquitos',   val: data.finiquitos},
-      {key:'catalogos',    val: data.catalogos},
-    ];
-    let allOk = true;
-    for(const sec of secciones){
-      if(!sec.val) continue;
-      try {
-        await fetchPost(APPS_SCRIPT_URL, {action:'saveSection', section:sec.key, data:sec.val});
-      } catch(e) {
-        allOk = false;
-        console.warn('Error guardando '+sec.key, e);
-      }
-    }
-    return {ok: allOk};
+    // Datos principales
+    await postSection('Expedientes',  data.db);
+    await postSection('Seguimiento',  data.seguimientos);
+    await postSection('Folios',       data.folios);
+    await postSection('Finiquitos',   data.finiquitos);
+    // Catálogos — uno por hoja
+    const c = data.catalogos || {};
+    await postSection('Cat_Nominas',     c.nominas);
+    await postSection('Cat_IATA',        c.iata);
+    await postSection('Cat_Puestos',     c.puestos);
+    await postSection('Cat_Posiciones',  c.posiciones);
+    await postSection('Cat_Direcciones', c.direcciones);
+    await postSection('Cat_Actividades', c.actividades);
+    await postSection('Cat_Prestaciones',c.prestaciones);
+    await postSection('Cat_DocFiniq',    c.docFiniq);
+    await postSection('Cat_RegPatronal', c.registrosPatronales);
+    await postSection('Cat_Salarios',    c.salarios);
+    return {ok:true};
   } else {
     // LEER: fetch GET con redirect follow (Apps Script redirige a googleusercontent)
     try {
