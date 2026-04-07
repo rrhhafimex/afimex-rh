@@ -4502,6 +4502,9 @@ function configNominasHTML(){
       <div style="display:flex;align-items:center;gap:2px"><span style="font-size:12px;color:var(--text2);flex-shrink:0">$</span><input type="text" inputmode="decimal" value="${r.salNeto||''}" onchange="DATA_NOMINAS[${r._i}].salNeto=parseFloat(this.value)||0" style="flex:1;width:0;border:none;background:transparent;font-size:12px;text-align:right;font-weight:600;color:var(--afimex-blue)"></div>
     </td>
     <td style="padding:4px 8px;border:1px solid var(--border)">
+      <div style="display:flex;align-items:center;gap:2px"><span style="font-size:12px;color:var(--text2);flex-shrink:0">$</span><input type="text" inputmode="decimal" value="${r.sdPres||''}" onchange="DATA_NOMINAS[${r._i}].sdPres=parseFloat(this.value)||0" style="flex:1;width:0;border:none;background:transparent;font-size:12px;text-align:right;font-weight:600;color:var(--afimex-orange)"></div>
+    </td>
+    <td style="padding:4px 8px;border:1px solid var(--border)">
       <select onchange="DATA_NOMINAS[${r._i}].rp=this.value"
         style="width:100%;border:none;background:transparent;font-size:12px;font-family:inherit">
         <option value="">—</option>
@@ -4572,6 +4575,7 @@ function configNominasHTML(){
             ${_thSort('nominas','sd','SD','95px')}
             ${_thSort('nominas','sbc','SBC','95px')}
             ${_thSort('nominas','salNeto','Sal. Neto','105px')}
+            ${_thSort('nominas','sdPres','SDP','90px')}
             ${_thSort('nominas','rp','Reg. Patronal','120px')}
             ${_thSort('nominas','zona','Zona','60px')}
             <th style="padding:6px 8px;border:1px solid #1A5FA8;width:75px;background:var(--afimex-blue)"></th>
