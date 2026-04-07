@@ -344,7 +344,7 @@ function jsonpCall(url, cbName){
 // Enviar via JSONP GET — único método que funciona cross-origin
 function jsonpSend(sheet, data){
   return new Promise((resolve)=>{
-    const cb = 'gs_'+sheet.replace(/[^a-z]/gi,'')+'_'+Date.now();
+    const cb = 'gs_'+sheet.replace(/[^a-zA-Z0-9]/g,'_')+'_'+Date.now();
     // Partir en chunks de 4000 chars si es necesario
     const json = JSON.stringify(data);
     const chunks = [];
