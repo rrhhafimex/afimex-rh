@@ -348,7 +348,7 @@ function jsonpSend(sheet, data){
     // Partir en chunks de 4000 chars si es necesario
     const json = JSON.stringify(data);
     const chunks = [];
-    const SIZE = 3500;
+    const SIZE = 7000;
     for(let i=0;i<json.length;i+=SIZE) chunks.push(json.slice(i,i+SIZE));
     
     // Enviar chunk por chunk secuencialmente
@@ -356,7 +356,7 @@ function jsonpSend(sheet, data){
     function sendNext(){
       if(idx >= chunks.length){ resolve({ok:true}); return; }
       const cbName = cb+'_'+idx;
-      const t = setTimeout(()=>{ delete window[cbName]; resolve({ok:true}); }, 8000);
+      const t = setTimeout(()=>{ delete window[cbName]; idx++; sendNext(); }, 4000);
       window[cbName] = ()=>{ clearTimeout(t); delete window[cbName]; idx++; sendNext(); };
       const s = document.createElement('script');
       s.onerror = ()=>{ clearTimeout(t); delete window[cbName]; idx++; sendNext(); };
@@ -377,21 +377,18 @@ async function gsCall(action, data){
     const c = data.catalogos || {};
     // Enviar todo en paralelo por grupos
     const usuarios = await getUsuarios();
+    // Enviar todo en paralelo
     await Promise.all([
-      jsonpSend('Expedientes',   data.db),
-      jsonpSend('Seguimiento',   data.seguimientos),
-      jsonpSend('Folios',        data.folios),
-      jsonpSend('Finiquitos',    data.finiquitos),
-      jsonpSend('Usuarios',      usuarios),
-    ]);
-    await Promise.all([
+      jsonpSend('Expedientes',      data.db),
+      jsonpSend('Seguimiento',      data.seguimientos),
+      jsonpSend('Folios',           data.folios),
+      jsonpSend('Finiquitos',       data.finiquitos),
+      jsonpSend('Usuarios',         usuarios),
       jsonpSend('Cat_Nominas',      c.nominas),
       jsonpSend('Cat_IATA',         c.iata),
       jsonpSend('Cat_Puestos',      c.puestos),
       jsonpSend('Cat_Posiciones',   c.posiciones),
       jsonpSend('Cat_Direcciones',  c.direcciones),
-    ]);
-    await Promise.all([
       jsonpSend('Cat_Actividades',  c.actividades),
       jsonpSend('Cat_Prestaciones', c.prestaciones),
       jsonpSend('Cat_DocFiniq',     c.docFiniq),
@@ -571,8 +568,14 @@ async function syncAll(){
   if(!tieneGSheets()){ setSyncStatus('local'); return; }
 
   // Empaquetar catálogos para enviar a GSheets
+  // Comprimir nóminas eliminando campos con valor 0 o vacío
+  const nominasCompact = DATA_NOMINAS.map(r=>{
+    const c={};
+    for(const k in r) if(r[k]!==0&&r[k]!==''&&r[k]!==null&&r[k]!==undefined) c[k]=r[k];
+    return c;
+  });
   const catalogos = {
-    nominas:     DATA_NOMINAS,
+    nominas:     nominasCompact,
     iata:        IATA_MAP,
     puestos:     PUESTOS_POR_OFICINA,
     posiciones:  DATA_POSICIONES,
@@ -596,8 +599,24 @@ async function syncAll(){
   }
 }
 
-async function saveDB()  { await syncAll(); }
-async function saveSeg() { await syncAll(); }
+// Guardar solo expedientes y seguimientos (rápido)
+async function saveDB(){
+  localStorage.setItem('afimex-db', JSON.stringify(db));
+  if(!tieneGSheets()) return;
+  setSyncStatus('saving');
+  try {
+    await Promise.all([
+      jsonpSend('Expedientes', db),
+      jsonpSend('Seguimiento', seguimientos),
+    ]);
+    setSyncStatus('ok');
+  } catch(e){ setSyncStatus('error'); }
+}
+async function saveSeg(){
+  localStorage.setItem('afimex-seguimientos', JSON.stringify(seguimientos));
+  if(!tieneGSheets()) return;
+  try { await jsonpSend('Seguimiento', seguimientos); } catch(e){}
+}
 async function saveFolios(){ await syncAll(); }
 
 // ─── HELPERS ──────────────────────────────────────────────────────────────────
@@ -1244,7 +1263,7 @@ function printContratoSemanal(r){
   </div>`;
   }
 
-  const css='<style>\n    * { box-sizing: border-box; margin: 0; padding: 0; }\n    body { font-family: Arial, sans-serif; font-size: 11pt; line-height: 1.6; color: #111; padding: 30px 40px; }\n    h1 { font-size: 11pt; font-weight: 700; text-align: center; margin-bottom: 20px; text-transform: uppercase; line-height: 1.5; }\n    .seccion { font-size: 11pt; font-weight: 700; text-align: center; margin: 16px 0 10px; letter-spacing: 2px; }\n    p { margin-bottom: 10px; text-align: justify; }\n    .clausula-titulo { font-weight: 700; display: inline; }\n    ul { padding-left: 20px; margin: 8px 0; }\n    ul li { margin-bottom: 4px; }\n    .firmas { display: grid; grid-template-columns: 1fr 1fr; gap: 60px; margin-top: 50px; }\n    .firma-col { text-align: center; }\n    .firma-linea { border-top: 1px solid #333; margin-top: 40px; padding-top: 6px; font-size: 10pt; }\n    .testigos { display: grid; grid-template-columns: 1fr 1fr; gap: 60px; margin-top: 40px; }\n    @media print { body { padding: 15px 20px; } }\n  </style>';
+  const css='<style>\n    * { box-sizing: border-box; margin: 0; padding: 0; }\n    body { font-family: Arial, sans-serif; font-size: 11pt; line-height: 1.6; color: #111; padding: 30px 40px; }\n    h1 { font-size: 11pt; font-weight: 700; text-align: center; margin-bottom: 20px; text-transform: uppercase; line-height: 1.5; }\n    .seccion { font-size: 11pt; font-weight: 700; text-align: center; margin: 16px 0 10px; letter-spacing: 2px; }\n    p { margin-bottom: 10px; text-align: justify; }\n    .clausula-titulo { font-weight: 700; display: inline; }\n    ul { padding-left: 20px; margin: 8px 0; }\n    ul li { margin-bottom: 4px; }\n    .firmas { display: grid; grid-template-columns: 1fr 1fr; gap: 60px; margin-top: 50px; }\n    .firma-col { text-align: center; }\n    .firma-linea { border-top: 1px solid #333; margin-top: 40px; padding-top: 6px; font-size: 10pt; }\n    .testigos { display: grid; grid-template-columns: 1fr 1fr; gap: 60px; margin-top: 40px; }\n    @media print { body { padding: 15px 20px; } @page { size: letter; margin: 1.5cm; } }\n  </style>';
 
   var c1 = makeContrato(r.fechaIngreso,              addDias(r.fechaIngreso,29));
   var c2 = makeContrato(addDias(r.fechaIngreso,30),  addDias(r.fechaIngreso,59));
@@ -1254,7 +1273,7 @@ function printContratoSemanal(r){
   if(!w){showToast('Permite ventanas emergentes en el navegador','#dc2626');return;}
   w.document.write('<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"><title>Contratos CIT - '+r.nombre+'</title>'
     +css
-    +'<style>@media print{@page{size:letter;margin:1cm;}.pb{page-break-after:always;}}</style>'
+    +'<style>@page{size:letter;margin:1.5cm;}@media print{.pb{page-break-after:always;}}</style>'
     +'</head><body>'
     +'<div class="pb">'+c1+'</div>'
     +'<div class="pb">'+c2+'</div>'
@@ -1377,7 +1396,7 @@ function printSolicitudTD(r){
     p { margin-bottom: 14px; text-align: justify; }
     .firma-area { margin-top: 60px; text-align: center; }
     .firma-linea { border-top: 1px solid #333; margin: 0 auto; width: 60%; padding-top: 6px; font-size: 10pt; }
-    @media print { body { padding: 20px 30px; } }
+    @media print { body { padding: 20px 30px; } @page { size: letter; margin: 1.5cm; } }
   </style></head><body>
   <div class="fecha">${fmtDate(r.fechaIngreso)}, ${r.oficina||'Monterrey'}, NL.</div>
   <div class="destinatario"><p>CARGO Y PORTEO DEL GOLFO, S.A. DE C.V<br>P r e s e n t e. -</p></div>
@@ -1499,7 +1518,7 @@ function printBaja(r){
     .ent-item:last-child{border-bottom:none;}
     .footer{margin-top:14px;padding-top:7px;border-top:1px solid #e2e8f0;display:flex;justify-content:space-between;font-size:7pt;color:#a0aec0;}
     .two-col{display:grid;grid-template-columns:1fr 1fr;gap:6px;}
-    @media print{@page{size:letter;margin:.5cm}body{padding:0}}
+    @page{size:letter;margin:1.5cm;}@media print{body{padding:0}}
   </style></head><body>
   <div class="hdr">
     <div class="hdr-left">
@@ -2884,7 +2903,7 @@ function printNomina(oficina, puesto, periodo) {
     + '.fb{border:2px dashed #E8650A;border-radius:4px;padding:12px 16px;margin-bottom:14px;display:flex;align-items:center;justify-content:space-between;gap:16px;background:#FDF0E8;}'
     + '.fl{border:1.5px solid #E8650A;border-radius:3px;padding:6px 30px;min-width:180px;background:white;}'
     + '.zr{display:flex;gap:8px;align-items:center;padding:8px 10px;}'
-    + '@media print{body{padding:10px 14px;}@page{margin:.6cm;}}'
+    + '@page{size:letter;margin:1.5cm;}@media print{body{padding:10px 14px;}}'
     + '</style></head><body>'
     + '<div class="hdr">'
     +   '<div><h1>Afimex Paqueteria</h1><div style="font-size:8pt;color:#555">Cargo y Porteo del Golfo, S.A. de C.V.</div></div>'
