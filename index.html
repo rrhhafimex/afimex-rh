@@ -341,36 +341,61 @@ function jsonpCall(url, cbName){
   });
 }
 
-async function postSection(sheet, data){
-  try {
-    await fetch(APPS_SCRIPT_URL, {
-      method:'POST', mode:'no-cors',
-      headers:{'Content-Type':'text/plain'},
-      body: JSON.stringify({action:'saveSection', sheet, data})
-    });
-    await new Promise(r=>setTimeout(r,300));
-  } catch(e){ console.warn('Error guardando '+sheet, e); }
+// Enviar via JSONP GET — único método que funciona cross-origin
+function jsonpSend(sheet, data){
+  return new Promise((resolve)=>{
+    const cb = 'gs_'+sheet.replace(/[^a-z]/gi,'')+'_'+Date.now();
+    // Partir en chunks de 4000 chars si es necesario
+    const json = JSON.stringify(data);
+    const chunks = [];
+    const SIZE = 3500;
+    for(let i=0;i<json.length;i+=SIZE) chunks.push(json.slice(i,i+SIZE));
+    
+    // Enviar chunk por chunk secuencialmente
+    let idx = 0;
+    function sendNext(){
+      if(idx >= chunks.length){ resolve({ok:true}); return; }
+      const cbName = cb+'_'+idx;
+      const t = setTimeout(()=>{ delete window[cbName]; resolve({ok:true}); }, 8000);
+      window[cbName] = ()=>{ clearTimeout(t); delete window[cbName]; idx++; sendNext(); };
+      const s = document.createElement('script');
+      s.onerror = ()=>{ clearTimeout(t); delete window[cbName]; idx++; sendNext(); };
+      const params = '?action=saveChunk&sheet='+encodeURIComponent(sheet)
+        +'&chunk='+idx+'&total='+chunks.length
+        +'&data='+encodeURIComponent(chunks[idx])
+        +'&callback='+cbName;
+      s.src = APPS_SCRIPT_URL + params;
+      document.head.appendChild(s);
+      setTimeout(()=>{ try{document.head.removeChild(s);}catch(e){} },10000);
+    }
+    sendNext();
+  });
 }
 
 async function gsCall(action, data){
   if(action === 'saveAll'){
-    // Datos principales
-    await postSection('Expedientes',  data.db);
-    await postSection('Seguimiento',  data.seguimientos);
-    await postSection('Folios',       data.folios);
-    await postSection('Finiquitos',   data.finiquitos);
-    // Catálogos — uno por hoja
     const c = data.catalogos || {};
-    await postSection('Cat_Nominas',     c.nominas);
-    await postSection('Cat_IATA',        c.iata);
-    await postSection('Cat_Puestos',     c.puestos);
-    await postSection('Cat_Posiciones',  c.posiciones);
-    await postSection('Cat_Direcciones', c.direcciones);
-    await postSection('Cat_Actividades', c.actividades);
-    await postSection('Cat_Prestaciones',c.prestaciones);
-    await postSection('Cat_DocFiniq',    c.docFiniq);
-    await postSection('Cat_RegPatronal', c.registrosPatronales);
-    await postSection('Cat_Salarios',    c.salarios);
+    // Enviar todo en paralelo por grupos
+    await Promise.all([
+      jsonpSend('Expedientes',   data.db),
+      jsonpSend('Seguimiento',   data.seguimientos),
+      jsonpSend('Folios',        data.folios),
+      jsonpSend('Finiquitos',    data.finiquitos),
+    ]);
+    await Promise.all([
+      jsonpSend('Cat_Nominas',      c.nominas),
+      jsonpSend('Cat_IATA',         c.iata),
+      jsonpSend('Cat_Puestos',      c.puestos),
+      jsonpSend('Cat_Posiciones',   c.posiciones),
+      jsonpSend('Cat_Direcciones',  c.direcciones),
+    ]);
+    await Promise.all([
+      jsonpSend('Cat_Actividades',  c.actividades),
+      jsonpSend('Cat_Prestaciones', c.prestaciones),
+      jsonpSend('Cat_DocFiniq',     c.docFiniq),
+      jsonpSend('Cat_RegPatronal',  c.registrosPatronales),
+      jsonpSend('Cat_Salarios',     c.salarios),
+    ]);
     return {ok:true};
   } else {
     // LEER: fetch GET con redirect follow (Apps Script redirige a googleusercontent)
