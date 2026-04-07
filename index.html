@@ -376,11 +376,13 @@ async function gsCall(action, data){
   if(action === 'saveAll'){
     const c = data.catalogos || {};
     // Enviar todo en paralelo por grupos
+    const usuarios = await getUsuarios();
     await Promise.all([
       jsonpSend('Expedientes',   data.db),
       jsonpSend('Seguimiento',   data.seguimientos),
       jsonpSend('Folios',        data.folios),
       jsonpSend('Finiquitos',    data.finiquitos),
+      jsonpSend('Usuarios',      usuarios),
     ]);
     await Promise.all([
       jsonpSend('Cat_Nominas',      c.nominas),
@@ -484,6 +486,15 @@ async function loadData(){
 
   if(!tieneGSheets()){ setSyncStatus('local'); return; }
   setSyncStatus('ok');
+  // Si no hay usuarios locales, cargar desde GSheets
+  const usuariosLocales = await getUsuarios();
+  if(usuariosLocales.length === 0){
+    const usuariosRemoto = await getUsuariosRemoto();
+    if(usuariosRemoto.length > 0){
+      localStorage.setItem('afimex-usuarios', JSON.stringify(usuariosRemoto));
+      showToast('✓ Usuarios sincronizados desde Drive ('+usuariosRemoto.length+')','#1A5FA8');
+    }
+  }
   // Si tiene GSheets configurado y la DB local está vacía, ofrecer sincronizar
   if(finiquitosDB.length===0 && db.length===0){
     setTimeout(()=>showToast('💡 Presiona Sincronizar para recuperar tus datos de Google Sheets','#1A5FA8'),1200);
@@ -515,6 +526,12 @@ async function sincronizarDesdeGSheets(){
         localStorage.setItem('afimex-finiquitos', JSON.stringify(finiquitosDB));
       }
       // ── Cargar catálogos desde GSheets ──
+      // Cargar usuarios desde GSheets si hay
+      if(res.usuarios && res.usuarios.length > 0){
+        localStorage.setItem('afimex-usuarios', JSON.stringify(res.usuarios));
+        showToast('✓ Usuarios sincronizados ('+res.usuarios.length+')','#1A5FA8');
+      }
+
       if(res.catalogos){
         const c = res.catalogos;
         if(c.nominas    && c.nominas.length>0)             { DATA_NOMINAS.splice(0,DATA_NOMINAS.length,...c.nominas); localStorage.setItem('afimex-config-nominas',JSON.stringify(DATA_NOMINAS)); }
@@ -3661,9 +3678,25 @@ function docsRefreshButtons(r){
 async function getUsuarios(){
   try{ const v=localStorage.getItem('afimex-usuarios'); return v?JSON.parse(v):[]; }catch(e){ return []; }
 }
+async function getUsuariosRemoto(){
+  // Cargar usuarios desde GSheets via JSONP
+  return new Promise((resolve)=>{
+    if(!tieneGSheets()){ resolve([]); return; }
+    const cb = 'gsUsers_'+Date.now();
+    const t = setTimeout(()=>{ delete window[cb]; resolve([]); }, 8000);
+    window[cb] = (r)=>{ clearTimeout(t); delete window[cb]; resolve(r.usuarios||[]); };
+    const s = document.createElement('script');
+    s.onerror = ()=>{ clearTimeout(t); delete window[cb]; resolve([]); };
+    s.src = APPS_SCRIPT_URL+'?action=loadUsuarios&callback='+cb;
+    document.head.appendChild(s);
+    setTimeout(()=>{ try{document.head.removeChild(s);}catch(e){} },10000);
+  });
+}
 async function saveUsuarios(users){
   localStorage.setItem('afimex-usuarios', JSON.stringify(users));
   await syncAll();
+  // También guardar usuarios directamente en su hoja
+  if(tieneGSheets()) jsonpSend('Usuarios', users);
 }
 
 // ── Login pantalla inicial ────────────────────────────────────────
