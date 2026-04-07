@@ -328,7 +328,7 @@ function tieneGSheets(){ return APPS_SCRIPT_URL && APPS_SCRIPT_URL.length > 10; 
 
 // ── Llamada al Apps Script ─────────────────────────────────────
 // Usa fetch directo — funciona tanto desde file:// como desde servidor
-// Llamada JSONP genérica
+// JSONP genérica (solo para leer)
 function jsonpCall(url, cbName){
   return new Promise((resolve) => {
     const t = setTimeout(() => { delete window[cbName]; resolve({ok:false,error:'timeout'}); }, 12000);
@@ -341,9 +341,20 @@ function jsonpCall(url, cbName){
   });
 }
 
+// POST fetch (funciona desde https://)
+async function fetchPost(url, body){
+  const resp = await fetch(url, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(body),
+    redirect: 'follow'
+  });
+  try { return await resp.json(); } catch(e) { return {ok:true}; }
+}
+
 async function gsCall(action, data){
   if(action === 'saveAll'){
-    // Guardar cada sección por separado para no exceder límite de URL
+    // Guardar cada sección por separado via POST
     const secciones = [
       {key:'db',           val: data.db},
       {key:'seguimientos', val: data.seguimientos},
@@ -354,11 +365,12 @@ async function gsCall(action, data){
     let allOk = true;
     for(const sec of secciones){
       if(!sec.val) continue;
-      const cb = 'gsSave_'+sec.key+'_'+Date.now();
-      const payload = encodeURIComponent(JSON.stringify(sec.val));
-      const url = APPS_SCRIPT_URL+'?action=saveSection&section='+sec.key+'&callback='+cb+'&payload='+payload;
-      const res = await jsonpCall(url, cb);
-      if(!res.ok){ allOk=false; console.warn('Error guardando '+sec.key, res.error); }
+      try {
+        await fetchPost(APPS_SCRIPT_URL, {action:'saveSection', section:sec.key, data:sec.val});
+      } catch(e) {
+        allOk = false;
+        console.warn('Error guardando '+sec.key, e);
+      }
     }
     return {ok: allOk};
   } else {
