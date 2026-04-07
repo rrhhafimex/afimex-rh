@@ -702,10 +702,10 @@ function renderNav(){
       `${syncBtn}<span class="role-badge role-admin">Admin</span><button class="btn-role" onclick="cerrarSesion()">Cerrar sesión</button>`;
   } else if(currentRole==='nominas'){
     document.getElementById('nav-right').innerHTML=
-      `<span class="role-badge" style="background:rgba(255,255,255,.18);color:white">💰 ${userName}</span><button class="btn-role" onclick="cerrarSesion()">Cerrar sesión</button>`;
+      `${syncBtn}<span class="role-badge" style="background:rgba(255,255,255,.18);color:white">💰 ${userName}</span><button class="btn-role" onclick="cerrarSesion()">Cerrar sesión</button>`;
   } else if(currentRole==='reclutador'){
     document.getElementById('nav-right').innerHTML=
-      `<span class="role-badge" style="background:rgba(255,255,255,.18);color:white">🔍 ${userName}</span><button class="btn-role" onclick="cerrarSesion()">Cerrar sesión</button>`;
+      `${syncBtn}<span class="role-badge" style="background:rgba(255,255,255,.18);color:white">🔍 ${userName}</span><button class="btn-role" onclick="cerrarSesion()">Cerrar sesión</button>`;
   } else {
     document.getElementById('nav-right').innerHTML=
       `${syncBtn}<span class="role-badge role-gen">Generalista</span><button class="btn-role" onclick="cerrarSesion()">Cerrar sesión</button>`;
