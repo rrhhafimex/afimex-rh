@@ -303,7 +303,7 @@ var OFICINAS_DIR = {
 
 const TABS_GEN = ['altas','baja','seguimiento','docs'];
 const TABS_ADM = ['altas','baja','seguimiento','base','docs','finiquitos','usuarios','config'];
-const TAB_LABELS = {altas:'Alta de Expediente',baja:'Solicitud de Baja',seguimiento:'Seguimiento de Ingresos',folios:'Folios de Salida',base:'Base de Datos',docs:'Impresión de Documentos',usuarios:'👥 Usuarios',config:'⚙️ Configuración',finiquitos:'💰 Finiquitos'};
+const TAB_LABELS = {altas:'Alta de Expediente',baja:'Solicitud de Baja',seguimiento:'Seguimiento de Ingresos',folios:'Folios de Salida',base:'Base de Datos',docs:'Impresión de Documentos',usuarios:'👥 Usuarios',config:'⚙️ Catálogo',finiquitos:'💰 Finiquitos'};
 
 // ─── STATE ────────────────────────────────────────────────────────────────────
 let currentTab='altas', currentType='semanal', isAdmin=false;
@@ -1215,7 +1215,7 @@ function printAlta(r){
     <!-- Encabezado -->
     <div style="display:flex; align-items:center; justify-content:space-between; border-bottom:3px solid #E8650A; padding-bottom:8px; margin-bottom:12px;">
       <div>
-        <div style="font-size:14pt; font-weight:700; color:#E8650A; line-height:1;">Afimex Paquetería</div>
+        <img src="https://rrhhafimex.github.io/afimex-rh/logo.png" style="height:35px;width:auto;display:block;">
         <div style="font-size:8pt; color:#555; margin-top:2px;">Cargo y Porteo del Golfo, S.A. de C.V.</div>
       </div>
       <div style="text-align:right;">
@@ -1695,7 +1695,7 @@ function printBaja(r){
   </style></head><body>
   <div class="hdr">
     <div class="hdr-left">
-      <img src="https://rrhhafimex.github.io/afimex-rh/logo.png" style="height:40px;width:auto;display:block;margin-bottom:4px;">
+      <img src="https://rrhhafimex.github.io/afimex-rh/logo.png" style="width:150px;display:block;">
       <div class="doc">Solicitud de Baja de Colaborador &nbsp;·&nbsp; AFX-FR552-RH V1.3</div>
     </div>
     <div class="hdr-right">
@@ -3468,7 +3468,7 @@ function docsSecGafete(r){
           display:flex;align-items:center;justify-content:center;background:var(--bg2);overflow:hidden;cursor:pointer"
           onclick="document.getElementById('foto-input').click()">
           ${window._docsGafeteFoto ?
-            `<img src="${window._docsGafeteFoto}" style="width:100%;height:100%;object-fit:cover">` :
+            `<img src="https://rrhhafimex.github.io/afimex-rh/logo.png" style="height:40px;width:auto;display:block;margin-bottom:4px;">` :
             `<div style="text-align:center;color:var(--text2);font-size:12px;padding:10px">📷<br>Clic para subir foto</div>`}
         </div>
         <input id="foto-input" type="file" accept="image/*" style="display:none"
@@ -4859,19 +4859,14 @@ function configPosicionesHTML(){
 
     var descCell;
     if(isOpen){
-      var actLines = acts.map(function(act,ai){
-        var safeAct = act.replace(/"/g,'&quot;');
-        return '<div style="display:flex;gap:6px;align-items:center;margin-bottom:5px">'
-          +'<input value="'+safeAct+'" oninput="ACTIVIDADES[\''+safePuesto+'\']['+ai+']=this.value" '
-          +'style="flex:1;padding:4px 8px;border:1px solid var(--border2);border-radius:4px;font-size:12px;font-family:inherit">'
-          +'<button onclick="descEliminarActividad(\''+safePuesto+'\','+ai+')" '
-          +'style="background:#fee2e2;color:#dc2626;border:none;border-radius:4px;padding:3px 8px;cursor:pointer;font-size:11px;flex-shrink:0">✕</button>'
-          +'</div>';
-      }).join('');
+      var actText = acts.join('\n');
+      var safeActText = actText.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
       descCell = '<div>'
-        + actLines
-        + '<button onclick="descAgregarActividad(\''+safePuesto+'\');window._posPuestoSel=\''+safePuesto+'\'" '
-        + 'style="background:var(--afimex-orange);color:white;border:none;border-radius:4px;padding:3px 10px;cursor:pointer;font-size:11px;margin-top:4px">+ Agregar línea</button>'
+        + '<textarea rows="6" '
+        + 'onchange="descActualizarTodas(' + "'" + safePuesto + "'" + ',this.value)" '
+        + 'style="width:100%;padding:6px 8px;border:1px solid var(--border2);border-radius:4px;font-size:12px;font-family:inherit;resize:vertical;min-height:100px"'
+        + '>' + safeActText + '</textarea>'
+        + '<div style="font-size:11px;color:var(--text2);margin-top:3px">&#128161; Una actividad por l&#237;nea</div>'
         + '</div>';
     } else {
       var cntTxt = acts.length > 0 ? acts.length+' actividad'+(acts.length>1?'es':'') : 'Sin descripción';
@@ -6461,6 +6456,9 @@ function configDescripcionHTML(){
   </div>`;
 }
 
+function descActualizarTodas(puesto, valor){
+  ACTIVIDADES[puesto] = valor.split('\n').map(function(l){return l.trim();}).filter(function(l){return l.length>0;});
+}
 function descAgregarActividad(puesto){
   if(!ACTIVIDADES[puesto]) ACTIVIDADES[puesto] = [];
   ACTIVIDADES[puesto].push('Nueva actividad');
