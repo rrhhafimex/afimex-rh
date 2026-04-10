@@ -4878,7 +4878,7 @@ function configPosicionesHTML(){
     }
 
     var row = '<tr style="background:'+bg+'">'
-      +'<td style="padding:6px 10px;border:1px solid var(--border);font-size:13px;font-weight:600">'+f.puesto+'</td>'
+      +'<td style="padding:4px 8px;border:1px solid var(--border)"><input value="'+f.puesto+'" data-oldkey="'+safeKey+'" data-oldpuesto="'+safePuesto+'" onchange="posicionRenombrar(this.dataset.oldkey,this.dataset.oldpuesto,this.value)" style="width:100%;border:none;background:transparent;font-size:13px;font-weight:600;font-family:inherit"></td>'
       +'<td style="padding:4px 8px;border:1px solid var(--border);width:160px">'
       +'<input value="'+f.clave+'" placeholder="Clave..." '
       +'onchange="posicionCambiarClaveDirecta(\''+safeKey+'\',this.value)" '
@@ -6456,6 +6456,21 @@ function configDescripcionHTML(){
   </div>`;
 }
 
+function posicionRenombrar(oldKey, oldPuesto, newPuesto){
+  newPuesto = newPuesto.trim().toUpperCase();
+  if(!newPuesto || newPuesto === oldPuesto) return;
+  // Renombrar en DATA_POSICIONES
+  var newKey = newPuesto + '|' + (oldKey.split('|')[1]||'');
+  var val = DATA_POSICIONES[oldKey];
+  delete DATA_POSICIONES[oldKey];
+  DATA_POSICIONES[newKey] = val||'';
+  // Renombrar en ACTIVIDADES
+  if(ACTIVIDADES[oldPuesto]){
+    ACTIVIDADES[newPuesto] = ACTIVIDADES[oldPuesto];
+    delete ACTIVIDADES[oldPuesto];
+  }
+  if(window._posPuestoSel === oldPuesto) window._posPuestoSel = newPuesto;
+}
 function descActualizarTodas(puesto, valor){
   ACTIVIDADES[puesto] = valor.split('\n').map(function(l){return l.trim();}).filter(function(l){return l.length>0;});
 }
