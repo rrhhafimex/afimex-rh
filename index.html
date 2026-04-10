@@ -397,25 +397,17 @@ async function gsCall(action, data){
     ]);
     return {ok:true};
   } else {
-    // LEER: fetch GET con redirect follow (Apps Script redirige a googleusercontent)
-    try {
-      const url = APPS_SCRIPT_URL + '?action=' + encodeURIComponent(action);
-      const resp = await fetch(url, { method: 'GET', mode: 'cors' });
-      const json = await resp.json();
-      return json;
-    } catch(e) {
-      // Fallback: JSONP via script tag
-      return new Promise((resolve) => {
-        const cbName = 'gsCb_' + Date.now();
-        const t = setTimeout(() => { delete window[cbName]; resolve({ ok: false, error: 'timeout' }); }, 8000);
-        window[cbName] = (r) => { clearTimeout(t); delete window[cbName]; resolve(r); };
-        const s = document.createElement('script');
-        s.src = APPS_SCRIPT_URL + '?action=' + encodeURIComponent(action) + '&callback=' + cbName;
-        s.onerror = () => { clearTimeout(t); resolve({ ok: false, error: 'error' }); };
-        document.head.appendChild(s);
-        setTimeout(() => { try{document.head.removeChild(s);}catch(e){} }, 10000);
-      });
-    }
+    // LEER siempre via JSONP — funciona en todas las computadoras sin problemas de CORS
+    return new Promise((resolve) => {
+      const cbName = 'gsCb_' + Date.now();
+      const t = setTimeout(() => { delete window[cbName]; resolve({ ok: false, error: 'timeout' }); }, 20000);
+      window[cbName] = (r) => { clearTimeout(t); delete window[cbName]; resolve(r); };
+      const s = document.createElement('script');
+      s.src = APPS_SCRIPT_URL + '?action=' + encodeURIComponent(action) + '&callback=' + cbName;
+      s.onerror = () => { clearTimeout(t); delete window[cbName]; resolve({ ok: false, error: 'network' }); };
+      document.head.appendChild(s);
+      setTimeout(() => { try{document.head.removeChild(s);}catch(e){} }, 25000);
+    });
   }
 }
 
