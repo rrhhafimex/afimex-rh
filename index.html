@@ -4925,14 +4925,18 @@ function posicionEliminar(key){
   render();
 }
 function posicionAgregar(){
-  const puestosLista = [...new Set(Object.values(PUESTOS_POR_OFICINA).flat())].sort();
   cfgModalAbrir('➕ Nueva Posición', [
-    {key:'puesto', label:'Puesto', type:'select', value:puestosLista[0]||'', options:puestosLista},
-    {key:'clave',  label:'Clave de Posición', value:''},
+    {key:'puesto',       label:'Nombre del Puesto',    value:''},
+    {key:'clave',        label:'Clave de Posición',    value:''},
+    {key:'actividades',  label:'Actividades (una por línea)', value:'', type:'textarea'},
   ], vals=>{
     if(!vals.puesto.trim()) return;
-    const key = vals.puesto.trim().toUpperCase()+'|';
+    const puesto = vals.puesto.trim().toUpperCase();
+    const key = puesto + '|';
     DATA_POSICIONES[key] = vals.clave.trim();
+    if(vals.actividades.trim()){
+      ACTIVIDADES[puesto] = vals.actividades.split('\n').map(l=>l.trim()).filter(l=>l.length>0);
+    }
     render();
   });
 }
@@ -6493,6 +6497,9 @@ function cfgModalAbrir(titulo, campos, onGuardar){
         ? `<select id="cmod-${f.key}" style="width:100%;padding:7px 10px;border:1px solid var(--border2);border-radius:5px;font-size:13px;font-family:inherit">
              ${f.options.map(o=>`<option ${o===f.value?'selected':''}>${o}</option>`).join('')}
            </select>`
+        : f.type==='textarea'
+        ? `<textarea id="cmod-${f.key}" rows="5"
+             style="width:100%;padding:7px 10px;border:1px solid var(--border2);border-radius:5px;font-size:13px;font-family:inherit;resize:vertical">${(f.value||'').toString().replace(/</g,'&lt;')}</textarea>`
         : `<input id="cmod-${f.key}" type="${f.type||'text'}" value="${(f.value||'').toString().replace(/"/g,'&quot;')}"
              style="width:100%;padding:7px 10px;border:1px solid var(--border2);border-radius:5px;font-size:13px;font-family:inherit">`
       }
