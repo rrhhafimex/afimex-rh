@@ -134,7 +134,20 @@ input.field-ok { border-color: #16a34a; background: #f0fdf4; }
 </style>
 </head>
 <body>
-<!-- ═══ MODAL EDICIÓN CATÁLOGOS ═══ -->
+<!-- ═══ OVERLAY DE CARGA ═══ -->
+<div id="loading-overlay" style="display:none;position:fixed;inset:0;background:rgba(15,30,60,0.72);z-index:99999;align-items:center;justify-content:center;flex-direction:column;gap:18px">
+  <div style="background:white;border-radius:14px;padding:32px 42px;box-shadow:0 8px 48px rgba(0,0,0,.35);display:flex;flex-direction:column;align-items:center;gap:16px;min-width:280px">
+    <div id="loading-spinner" style="width:48px;height:48px;border:5px solid #e5e7eb;border-top-color:var(--afimex-orange);border-radius:50%;animation:spin .8s linear infinite"></div>
+    <div id="loading-title" style="font-size:15px;font-weight:700;color:var(--afimex-blue);text-align:center">Procesando...</div>
+    <div id="loading-msg" style="font-size:13px;color:var(--text2);text-align:center;max-width:240px;line-height:1.5"></div>
+    <div id="loading-sub" style="font-size:11px;color:#9ca3af;text-align:center">Por favor espera, no cierres ni recargues la página</div>
+  </div>
+</div>
+<style>
+@keyframes spin { to { transform: rotate(360deg); } }
+</style>
+
+
 <div id="cfg-modal-overlay" onclick="cfgModalCerrar()" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:9000;align-items:center;justify-content:center"></div>
 <div id="cfg-modal" style="display:none;position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:9001;background:white;border-radius:10px;box-shadow:0 8px 40px rgba(0,0,0,.25);width:480px;max-width:95vw;font-family:inherit">
   <div style="background:var(--afimex-blue);color:white;padding:14px 18px;border-radius:10px 10px 0 0;display:flex;justify-content:space-between;align-items:center">
@@ -173,6 +186,7 @@ const ADMIN_PASS = '1006';
 const GENERALISTA_PASS = 'rh2024';
 const TABS_REC = ['altas','seguimiento','docs']; // Pestañas reclutador
 const TABS_NOM = ['baja','finiquitos']; // Pestañas nóminas
+const TABS_GER = ['altas','baja','seguimiento','base','docs','folios']; // Pestañas gerencia
 // ─── CATÁLOGO DE SALARIOS ────────────────────────────────────────────────────
 var DATA_SALARIOS = [
   { sd: 316,  sbc: 331.58, descripcion: "Salario Base Zona A" },
@@ -375,15 +389,13 @@ function jsonpSend(sheet, data){
 async function gsCall(action, data){
   if(action === 'saveAll'){
     const c = data.catalogos || {};
-    // Enviar todo en paralelo por grupos
+    // Obtener usuarios locales — NUNCA enviar lista vacía a la nube para no borrar usuarios
     const usuarios = await getUsuarios();
-    // Enviar todo en paralelo
-    await Promise.all([
+    const promises = [
       jsonpSend('Expedientes',      data.db),
       jsonpSend('Seguimiento',      data.seguimientos),
       jsonpSend('Folios',           data.folios),
       jsonpSend('Finiquitos',       data.finiquitos),
-      jsonpSend('Usuarios',         usuarios),
       jsonpSend('Cat_Nominas',      c.nominas),
       jsonpSend('Cat_IATA',         c.iata),
       jsonpSend('Cat_Puestos',      c.puestos),
@@ -394,7 +406,12 @@ async function gsCall(action, data){
       jsonpSend('Cat_DocFiniq',     c.docFiniq),
       jsonpSend('Cat_RegPatronal',  c.registrosPatronales),
       jsonpSend('Cat_Salarios',     c.salarios),
-    ]);
+    ];
+    // Solo enviar usuarios si hay al menos uno — evita borrar la lista en la nube
+    if(usuarios && usuarios.length > 0){
+      promises.push(jsonpSend('Usuarios', usuarios));
+    }
+    await Promise.all(promises);
     return {ok:true};
   } else {
     // LEER siempre via JSONP — funciona en todas las computadoras sin problemas de CORS
@@ -433,6 +450,18 @@ function setSyncStatus(estado){
   const s = map[estado]||map.local;
   el.textContent = s.txt;
   el.className = 'sync-badge ' + s.cls;
+}
+
+function showLoading(titulo, mensaje){
+  const ov = document.getElementById('loading-overlay');
+  if(!ov) return;
+  document.getElementById('loading-title').textContent = titulo || 'Procesando...';
+  document.getElementById('loading-msg').textContent   = mensaje || '';
+  ov.style.display = 'flex';
+}
+function hideLoading(){
+  const ov = document.getElementById('loading-overlay');
+  if(ov) ov.style.display = 'none';
 }
 
 // ── CARGAR datos (Google Sheets → local) ────────────────────────
@@ -475,18 +504,20 @@ async function loadData(){
 
   if(!tieneGSheets()){ setSyncStatus('local'); return; }
   setSyncStatus('ok');
-  // Si no hay usuarios locales, cargar desde GSheets
+  // Si no hay usuarios locales, siempre intentar recuperarlos de la nube
   const usuariosLocales = await getUsuarios();
   if(usuariosLocales.length === 0){
-    const usuariosRemoto = await getUsuariosRemoto();
-    if(usuariosRemoto.length > 0){
-      localStorage.setItem('afimex-usuarios', JSON.stringify(usuariosRemoto));
-      showToast('✓ Usuarios sincronizados desde Drive ('+usuariosRemoto.length+')','#1A5FA8');
-    }
+    try{
+      const usuariosRemoto = await getUsuariosRemoto();
+      if(usuariosRemoto.length > 0){
+        localStorage.setItem('afimex-usuarios', JSON.stringify(usuariosRemoto));
+        showToast('✓ Usuarios recuperados de la nube ('+usuariosRemoto.length+')','#1A5FA8');
+      }
+    }catch(e){}
   }
   // Si tiene GSheets configurado y la DB local está vacía, ofrecer sincronizar
   if(finiquitosDB.length===0 && db.length===0){
-    setTimeout(()=>showToast('💡 Presiona Sincronizar para recuperar tus datos de Google Sheets','#1A5FA8'),1200);
+    setTimeout(()=>showToast('💡 Presiona ⬇ Bajar para recuperar tus datos de Google Sheets','#1A5FA8'),1200);
   }
 }
 
@@ -498,7 +529,7 @@ async function subirCatalogosANube(){
   }
   try{
     setSyncStatus('saving');
-    showToast('Subiendo catálogos a Google Sheets...','#1A5FA8');
+    showLoading('⬆ Subiendo catálogos', 'Enviando nóminas, puestos, posiciones y configuración a Google Sheets...');
     const nominasCompact = DATA_NOMINAS.map(r=>{
       const c={};
       for(const k in r) if(r[k]!==0&&r[k]!==''&&r[k]!==null&&r[k]!==undefined) c[k]=r[k];
@@ -529,9 +560,11 @@ async function subirCatalogosANube(){
       jsonpSend('Cat_Salarios',     catalogos.salarios),
     ]);
     setSyncStatus('ok');
+    hideLoading();
     showToast('✓ Catálogos subidos correctamente a Google Sheets');
   } catch(e){
     setSyncStatus('error');
+    hideLoading();
     showToast('Error al subir catálogos','#dc2626');
   }
 }
@@ -544,7 +577,7 @@ async function sincronizarDesdeGSheets(){
   }
   try{
     setSyncStatus('loading');
-    showToast('Descargando datos de Google Sheets...','#1A5FA8');
+    showLoading('⬇ Descargando de la nube', 'Obteniendo expedientes, catálogos y configuración desde Google Sheets...');
     const res = await gsCall('loadAll', {});
     if(res && res.ok){
       if(res.db && res.db.length > 0){
@@ -563,13 +596,9 @@ async function sincronizarDesdeGSheets(){
         finiquitosDB = res.finiquitos;
         localStorage.setItem('afimex-finiquitos', JSON.stringify(finiquitosDB));
       }
-      // ── Cargar catálogos desde GSheets ──
-      // Cargar usuarios desde GSheets si hay
       if(res.usuarios && res.usuarios.length > 0){
         localStorage.setItem('afimex-usuarios', JSON.stringify(res.usuarios));
-        showToast('✓ Usuarios sincronizados ('+res.usuarios.length+')','#1A5FA8');
       }
-
       if(res.catalogos){
         const c = res.catalogos;
         if(c.nominas    && c.nominas.length>0)             { DATA_NOMINAS.splice(0,DATA_NOMINAS.length,...c.nominas); localStorage.setItem('afimex-config-nominas',JSON.stringify(DATA_NOMINAS)); }
@@ -580,19 +609,20 @@ async function sincronizarDesdeGSheets(){
         if(c.actividades&& Object.keys(c.actividades).length>0){ Object.keys(ACTIVIDADES).forEach(k=>delete ACTIVIDADES[k]); Object.assign(ACTIVIDADES,c.actividades); localStorage.setItem('afimex-config-actividades',JSON.stringify(ACTIVIDADES)); }
         if(c.prestaciones&&Object.keys(c.prestaciones).length>0){ Object.keys(PRESTACIONES_CONFIG).forEach(k=>delete PRESTACIONES_CONFIG[k]); Object.assign(PRESTACIONES_CONFIG,c.prestaciones); localStorage.setItem('afimex-config-prestaciones',JSON.stringify(PRESTACIONES_CONFIG)); }
         if(c.salarios&&c.salarios.length>0){ DATA_SALARIOS.splice(0,DATA_SALARIOS.length,...c.salarios); localStorage.setItem('afimex-config-salarios',JSON.stringify(DATA_SALARIOS)); }
-                if(c.registrosPatronales&&c.registrosPatronales.length>0){ DATA_REGISTROS_PATRONALES.splice(0,DATA_REGISTROS_PATRONALES.length,...c.registrosPatronales); localStorage.setItem('afimex-config-rp',JSON.stringify(DATA_REGISTROS_PATRONALES)); }
-                if(c.docFiniq&&Object.keys(c.docFiniq).length>0){ window.DOC_FINIQ_CONFIG=c.docFiniq; localStorage.setItem('afimex-config-docfiniq',JSON.stringify(c.docFiniq)); }
-        showToast('✓ Datos y catálogos sincronizados correctamente');
-      } else {
-        showToast('✓ Datos sincronizados correctamente');
+        if(c.registrosPatronales&&c.registrosPatronales.length>0){ DATA_REGISTROS_PATRONALES.splice(0,DATA_REGISTROS_PATRONALES.length,...c.registrosPatronales); localStorage.setItem('afimex-config-rp',JSON.stringify(DATA_REGISTROS_PATRONALES)); }
+        if(c.docFiniq&&Object.keys(c.docFiniq).length>0){ window.DOC_FINIQ_CONFIG=c.docFiniq; localStorage.setItem('afimex-config-docfiniq',JSON.stringify(c.docFiniq)); }
       }
+      hideLoading();
       setSyncStatus('ok');
+      showToast('✓ Datos y catálogos sincronizados correctamente');
       render();
     } else {
+      hideLoading();
       setSyncStatus('error');
       showToast('Error al conectar con Google Sheets','#dc2626');
     }
   } catch(e){
+    hideLoading();
     setSyncStatus('error');
     showToast('No se pudo conectar con Google Sheets','#dc2626');
   }
@@ -744,10 +774,11 @@ function renderNav(){
   }
 
   let tabs;
-  if(currentRole==='admin')         tabs = TABS_ADM;
+  if(currentRole==='admin')          tabs = TABS_ADM;
   else if(currentRole==='reclutador') tabs = TABS_REC;
-  else if(currentRole==='nominas')  tabs = TABS_NOM;
-  else                               tabs = TABS_GEN;
+  else if(currentRole==='nominas')    tabs = TABS_NOM;
+  else if(currentRole==='gerencia')   tabs = TABS_GER;
+  else                                tabs = TABS_GEN;
 
   document.getElementById('nav-links').innerHTML=tabs.map(t=>`<button class="nav-btn ${currentTab===t?'active':''}" onclick="showTab('${t}')">${TAB_LABELS[t]}</button>`).join('');
 
@@ -766,6 +797,9 @@ function renderNav(){
   } else if(currentRole==='reclutador'){
     document.getElementById('nav-right').innerHTML=
       `${syncBtn}<span class="role-badge" style="background:rgba(255,255,255,.18);color:white">🔍 ${userName}</span><button class="btn-role" onclick="cerrarSesion()">Cerrar sesión</button>`;
+  } else if(currentRole==='gerencia'){
+    document.getElementById('nav-right').innerHTML=
+      `${syncBtn}<span class="role-badge" style="background:rgba(255,255,255,.18);color:white">🏢 ${userName}</span><button class="btn-role" onclick="cerrarSesion()">Cerrar sesión</button>`;
   } else {
     document.getElementById('nav-right').innerHTML=
       `${syncBtn}<span class="role-badge role-gen">Generalista</span><button class="btn-role" onclick="cerrarSesion()">Cerrar sesión</button>`;
@@ -2468,7 +2502,8 @@ function render(){
   const _roleTabsR = currentRole==='admin' ? TABS_ADM :
                      currentRole==='generalista' ? TABS_GEN :
                      currentRole==='reclutador' ? TABS_REC :
-                     currentRole==='nominas' ? TABS_NOM : TABS_GEN;
+                     currentRole==='nominas' ? TABS_NOM :
+                     currentRole==='gerencia' ? TABS_GER : TABS_GEN;
   if(!_roleTabsR.includes(currentTab)) currentTab=_roleTabsR[0];
   try{
     document.getElementById('main-content').innerHTML=(map[currentTab]||map[_roleTabsR[0]])();
@@ -3864,10 +3899,9 @@ async function getUsuariosRemoto(){
   });
 }
 async function saveUsuarios(users){
+  if(!users || users.length === 0) return; // nunca guardar lista vacía
   localStorage.setItem('afimex-usuarios', JSON.stringify(users));
-  await syncAll();
-  // También guardar usuarios directamente en su hoja
-  if(tieneGSheets()) jsonpSend('Usuarios', users);
+  if(tieneGSheets()) await jsonpSend('Usuarios', users);
 }
 
 // ── Login pantalla inicial ────────────────────────────────────────
@@ -3898,6 +3932,10 @@ function mostrarLoginInicial(){
           style="padding:10px 6px;border-radius:var(--radius-sm);border:2px solid var(--border);background:white;cursor:pointer;font-size:12px;font-weight:600;color:var(--text2);transition:all .2s">
           💰<br>Nóminas
         </button>
+        <button onclick="loginSetTipo('gerencia')" id="btn-tipo-ger"
+          style="padding:10px 6px;border-radius:var(--radius-sm);border:2px solid var(--border);background:white;cursor:pointer;font-size:12px;font-weight:600;color:var(--text2);transition:all .2s">
+          🏢<br>Gerencia
+        </button>
       </div>
       <!-- Campos -->
       <div id="login-campo-usuario" style="display:none" class="form-group">
@@ -3922,8 +3960,9 @@ function mostrarLoginInicial(){
 let _loginTipo = 'generalista';
 function loginSetTipo(tipo){
   _loginTipo = tipo;
-  ['generalista','reclutador','admin','nominas'].forEach(t => {
-    const btn = document.getElementById('btn-tipo-'+t.substring(0,3));
+  ['generalista','reclutador','admin','nominas','gerencia'].forEach(t => {
+    const key = t==='generalista'?'gen':t==='reclutador'?'rec':t==='admin'?'adm':t==='nominas'?'nom':'ger';
+    const btn = document.getElementById('btn-tipo-'+key);
     if(!btn) return;
     const active = t === tipo;
     btn.style.borderColor  = active ? 'var(--afimex-blue)' : 'var(--border)';
@@ -3932,7 +3971,7 @@ function loginSetTipo(tipo){
   });
   const campUser = document.getElementById('login-campo-usuario');
   const passLabel = document.getElementById('login-pass-label');
-  if(campUser) campUser.style.display = (tipo==='reclutador'||tipo==='generalista'||tipo==='nominas') ? 'block' : 'none';
+  if(campUser) campUser.style.display = (tipo==='reclutador'||tipo==='generalista'||tipo==='nominas'||tipo==='gerencia') ? 'block' : 'none';
   if(passLabel) passLabel.textContent = 'Contraseña';
   const err = document.getElementById('login-error');
   if(err) err.style.display='none';
@@ -3954,7 +3993,7 @@ async function loginEntrar(){
   }
 
   // Roles que requieren usuario+contraseña
-  if(['generalista','reclutador','nominas'].includes(_loginTipo)){
+  if(['generalista','reclutador','nominas','gerencia'].includes(_loginTipo)){
     let users = [];
     try{ users = await getUsuarios(); }catch(e){ users=[]; }
     const found = users.find(u =>
@@ -3965,8 +4004,7 @@ async function loginEntrar(){
     if(found){
       currentRole=_loginTipo; isAdmin=false;
       currentUser={nombre:found.nombre||found.usuario, usuario:found.usuario, rol:_loginTipo};
-      // Set first allowed tab for this role
-      const _tabsMap={generalista:TABS_GEN,reclutador:TABS_REC,nominas:TABS_NOM};
+      const _tabsMap={generalista:TABS_GEN,reclutador:TABS_REC,nominas:TABS_NOM,gerencia:TABS_GER};
       const _allowedTabs=_tabsMap[_loginTipo]||TABS_GEN;
       if(!_allowedTabs.includes(currentTab)) currentTab=_allowedTabs[0];
       renderNav(); render();
@@ -3986,20 +4024,20 @@ function cerrarSesion(){
 // ── Panel Admin: Gestión de Usuarios ─────────────────────────────
 async function usuariosHTML(){
   const users = await getUsuarios();
-  const recs = users.filter(u=>['reclutador','generalista','nominas'].includes(u.rol));
+  const recs = users.filter(u=>['reclutador','generalista','nominas','gerencia'].includes(u.rol));
   return `
   <div class="content" style="padding:20px">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:18px">
       <div>
         <h2 style="font-size:16px;font-weight:700;color:var(--afimex-blue)">Gestión de Usuarios</h2>
-        <div style="font-size:12px;color:var(--text2);margin-top:2px">Generalistas y Reclutadores del sistema</div>
+        <div style="font-size:12px;color:var(--text2);margin-top:2px">Usuarios del sistema</div>
       </div>
       <button class="btn btn-primary" onclick="modalNuevoUsuario()">+ Nuevo Usuario</button>
     </div>
     ${recs.length===0 ? `
     <div style="text-align:center;padding:40px;color:var(--text2);background:white;border-radius:var(--radius);border:1px solid var(--border)">
       <div style="font-size:32px;margin-bottom:10px">👤</div>
-      <div style="font-size:14px;font-weight:600">No hay reclutadores registrados</div>
+      <div style="font-size:14px;font-weight:600">No hay usuarios registrados</div>
       <div style="font-size:12px;margin-top:4px">Crea el primero con el botón de arriba</div>
     </div>` : `
     <div style="background:white;border:1px solid var(--border);border-radius:var(--radius);overflow:hidden">
@@ -4014,17 +4052,20 @@ async function usuariosHTML(){
           </tr>
         </thead>
         <tbody>
-          ${recs.map((u,i)=>`
+          ${recs.map((u,i)=>{
+            const rolColor = u.rol==='admin'?'var(--afimex-orange)':u.rol==='generalista'?'var(--afimex-blue)':u.rol==='gerencia'?'#7c3aed':u.rol==='nominas'?'#16a34a':'#64748b';
+            const rolLabel = {generalista:'Generalista',reclutador:'Reclutador',nominas:'Nóminas',gerencia:'Gerencia',admin:'Admin'}[u.rol]||u.rol;
+            return `
           <tr style="border-bottom:1px solid var(--bg2);background:${i%2===0?'white':'var(--bg2)'}">
             <td style="padding:10px 14px;font-weight:600">${u.nombre}</td>
-            <td style="padding:10px 14px"><span style="background:${u.rol==='admin'?'var(--afimex-orange)':u.rol==='generalista'?'var(--afimex-blue)':'#64748b'};color:white;padding:2px 8px;border-radius:99px;font-size:11px;font-weight:600">${u.rol}</span></td>
+            <td style="padding:10px 14px"><span style="background:${rolColor};color:white;padding:2px 8px;border-radius:99px;font-size:11px;font-weight:600">${rolLabel}</span></td>
             <td style="padding:10px 14px;color:var(--text2)">${u.usuario}</td>
             <td style="padding:10px 14px;color:var(--text2)">${u.creado||'—'}</td>
             <td style="padding:10px 14px;text-align:center;display:flex;gap:6px;justify-content:center">
               <button onclick="modalEditarUsuario('${u.usuario}')" class="btn btn-sm" style="font-size:11px;padding:3px 10px">✏️ Editar</button>
               <button onclick="eliminarUsuario('${u.usuario}')" class="btn btn-sm" style="font-size:11px;padding:3px 10px;background:#fee2e2;color:#dc2626;border-color:#fca5a5">🗑 Eliminar</button>
             </td>
-          </tr>`).join('')}
+          </tr>`;}).join('')}
         </tbody>
       </table>
     </div>`}
@@ -4043,6 +4084,7 @@ function modalNuevoUsuario(){
           <option value="reclutador">Reclutador</option>
           <option value="generalista">Generalista</option>
           <option value="nominas">Nóminas</option>
+          <option value="gerencia">Gerencia</option>
         </select></div>
       <div class="form-group"><label>Usuario (para iniciar sesión)</label>
         <input type="text" id="mu-usuario" placeholder="Ej: ana.garcia" autocomplete="off"></div>
@@ -4987,62 +5029,27 @@ function posicionEliminar(key){
   render();
 }
 function posicionAgregar(){
-  const oficinasDisponibles = Object.keys(IATA_MAP).sort();
   cfgModalAbrir('➕ Nueva Posición', [
-    {key:'puesto',       label:'Nombre del Puesto',    value:''},
-    {key:'oficina',      label:'Oficina donde aplica', type:'select', value: oficinasDisponibles[0]||'', options: oficinasDisponibles},
-    {key:'periodo',      label:'Periodo de nómina',    type:'select', value:'SEMANA', options:['SEMANA','QUINCENA']},
-    {key:'actividades',  label:'Actividades (una por línea)', value:'', type:'textarea'},
+    {key:'puesto',      label:'Nombre del Puesto', value:''},
+    {key:'actividades', label:'Actividades (una por línea)', value:'', type:'textarea'},
   ], vals=>{
     if(!vals.puesto.trim()) return;
     const puesto = vals.puesto.trim().toUpperCase();
-    const oficina = vals.oficina.trim();
 
-    // 1. Agregar a DATA_POSICIONES (solo para mantener la lista de puestos únicos)
-    const iata = IATA_MAP[oficina] || '';
-    const key = puesto + '|' + iata;
-    DATA_POSICIONES[key] = vals.clave.trim();
+    // Registrar en DATA_POSICIONES con key genérico (sin IATA, la clave va en Nóminas)
+    const key = puesto + '|';
+    if(!DATA_POSICIONES[key]) DATA_POSICIONES[key] = '';
 
-    // 2. Agregar a PUESTOS_POR_OFICINA para que aparezca en el alta
-    if(oficina){
-      if(!PUESTOS_POR_OFICINA[oficina]) PUESTOS_POR_OFICINA[oficina] = [];
-      if(!PUESTOS_POR_OFICINA[oficina].map(p=>p.toUpperCase()).includes(puesto)){
-        PUESTOS_POR_OFICINA[oficina].push(puesto);
-      }
-    }
-
-    // 3. Agregar registro de nómina vacío para que el puesto sea seleccionable en el alta
-    const yaExiste = DATA_NOMINAS.some(r =>
-      r.puesto.toUpperCase().trim() === puesto &&
-      (r.oficina||'').toLowerCase() === (oficina||'').toLowerCase() &&
-      r.periodo === vals.periodo
-    );
-    if(!yaExiste){
-      const rpDefault = DATA_REGISTROS_PATRONALES[0] ? DATA_REGISTROS_PATRONALES[0].rp : '';
-      DATA_NOMINAS.push({
-        periodo: vals.periodo,
-        puesto:  puesto,
-        oficina: oficina,
-        sd:      0,
-        sbc:     0,
-        salNeto: 0,
-        rp:      rpDefault,
-        zona:    'A',
-        sdPres:  0,
-      });
-    }
-
-    // 4. Agregar actividades
+    // Agregar actividades si se capturaron
     if(vals.actividades.trim()){
       ACTIVIDADES[puesto] = vals.actividades.split('\n').map(l=>l.trim()).filter(l=>l.length>0);
     }
 
-    // Guardar y navegar
     window._configTab = _configTab = 'posiciones';
     window._posSearch = '';
     window._posPuestoSel = puesto;
     configGuardar();
-    showToast('✓ Posición agregada. Ve a Nóminas para capturar el salario del puesto.');
+    showToast('✓ Posición creada. Ve a Nóminas para asignarle oficina, clave y salario.');
   });
 }
 
@@ -5058,7 +5065,6 @@ function resetNominasDesdeCodigoFuente(){
 }
 
 async function configGuardar(){
-  // Migrar oficinas antes de guardar (por si acaso)
   try{migrarOficinasNominas();}catch(e){}
   // Guardar en localStorage
   localStorage.setItem('afimex-config-nominas',    JSON.stringify(DATA_NOMINAS));
@@ -5069,10 +5075,12 @@ async function configGuardar(){
   localStorage.setItem('afimex-config-prestaciones', JSON.stringify(PRESTACIONES_CONFIG));
   localStorage.setItem('afimex-config-actividades',  JSON.stringify(ACTIVIDADES));
   localStorage.setItem('afimex-config-salarios',  JSON.stringify(DATA_SALARIOS));
-    localStorage.setItem('afimex-config-rp',        JSON.stringify(DATA_REGISTROS_PATRONALES));
-    localStorage.setItem('afimex-config-docfiniq',     JSON.stringify(window.DOC_FINIQ_CONFIG||{}));
+  localStorage.setItem('afimex-config-rp',        JSON.stringify(DATA_REGISTROS_PATRONALES));
+  localStorage.setItem('afimex-config-docfiniq',     JSON.stringify(window.DOC_FINIQ_CONFIG||{}));
   // Subir también a Google Sheets si está configurado
+  if(tieneGSheets()) showLoading('💾 Guardando catálogos', 'Sincronizando cambios con Google Sheets...');
   await syncAll();
+  hideLoading();
   showToast('✓ Configuración guardada' + (tieneGSheets() ? ' y sincronizada con Drive' : ''));
   render();
 }
