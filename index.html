@@ -490,9 +490,58 @@ async function loadData(){
   }
 }
 
+// ── SUBIR catálogos locales a la nube (sin descargar) ──────────
+async function subirCatalogosANube(){
+  if(!tieneGSheets()){ showToast('Configura la URL del Apps Script primero','#dc2626'); return; }
+  if(!confirm('¿Subir los catálogos locales actuales a Google Sheets?\n\nEsto sobreescribirá los catálogos en la nube con los datos que tienes ahora en esta computadora.')){
+    return;
+  }
+  try{
+    setSyncStatus('saving');
+    showToast('Subiendo catálogos a Google Sheets...','#1A5FA8');
+    const nominasCompact = DATA_NOMINAS.map(r=>{
+      const c={};
+      for(const k in r) if(r[k]!==0&&r[k]!==''&&r[k]!==null&&r[k]!==undefined) c[k]=r[k];
+      return c;
+    });
+    const catalogos = {
+      nominas:     nominasCompact,
+      iata:        IATA_MAP,
+      puestos:     PUESTOS_POR_OFICINA,
+      posiciones:  DATA_POSICIONES,
+      direcciones: OFICINAS_DIR,
+      actividades: ACTIVIDADES,
+      prestaciones:PRESTACIONES_CONFIG,
+      docFiniq:    window.DOC_FINIQ_CONFIG || {},
+      registrosPatronales: DATA_REGISTROS_PATRONALES,
+      salarios: DATA_SALARIOS,
+    };
+    await Promise.all([
+      jsonpSend('Cat_Nominas',      catalogos.nominas),
+      jsonpSend('Cat_IATA',         catalogos.iata),
+      jsonpSend('Cat_Puestos',      catalogos.puestos),
+      jsonpSend('Cat_Posiciones',   catalogos.posiciones),
+      jsonpSend('Cat_Direcciones',  catalogos.direcciones),
+      jsonpSend('Cat_Actividades',  catalogos.actividades),
+      jsonpSend('Cat_Prestaciones', catalogos.prestaciones),
+      jsonpSend('Cat_DocFiniq',     catalogos.docFiniq),
+      jsonpSend('Cat_RegPatronal',  catalogos.registrosPatronales),
+      jsonpSend('Cat_Salarios',     catalogos.salarios),
+    ]);
+    setSyncStatus('ok');
+    showToast('✓ Catálogos subidos correctamente a Google Sheets');
+  } catch(e){
+    setSyncStatus('error');
+    showToast('Error al subir catálogos','#dc2626');
+  }
+}
+
 // ── CARGA MANUAL desde Google Sheets ───────────────────────────
 async function sincronizarDesdeGSheets(){
   if(!tieneGSheets()){ showToast('Configura la URL del Apps Script primero','#dc2626'); return; }
+  if(!confirm('¿Descargar datos de Google Sheets?\n\nEsto sobreescribirá los datos locales de esta computadora con los datos de la nube.\n\nSi tienes cambios locales que no has subido, se perderán.')){
+    return;
+  }
   try{
     setSyncStatus('loading');
     showToast('Descargando datos de Google Sheets...','#1A5FA8');
@@ -703,7 +752,7 @@ function renderNav(){
   document.getElementById('nav-links').innerHTML=tabs.map(t=>`<button class="nav-btn ${currentTab===t?'active':''}" onclick="showTab('${t}')">${TAB_LABELS[t]}</button>`).join('');
 
   const syncBtn = tieneGSheets()
-    ? `<button class="btn-role" onclick="sincronizarDesdeGSheets()" title="Descargar datos de Google Sheets" style="background:rgba(255,255,255,.15);margin-right:6px">⬇ Sincronizar</button>`
+    ? `<button class="btn-role" onclick="subirCatalogosANube()" title="Subir catálogos locales a Google Sheets" style="background:rgba(255,255,255,.12);margin-right:4px">⬆ Subir</button><button class="btn-role" onclick="sincronizarDesdeGSheets()" title="Descargar datos de Google Sheets" style="background:rgba(255,255,255,.15);margin-right:6px">⬇ Bajar</button>`
     : '';
 
   const userName = currentUser ? currentUser.nombre : '';
@@ -3355,8 +3404,37 @@ const DATA_POSICIONES = {
 };
 function buscarPosicion(puesto, iata) {
   if (!puesto || !iata) return null;
-  var key = puesto.toUpperCase().trim() + '|' + iata.toUpperCase().trim();
+  // Buscar primero en DATA_NOMINAS (fuente de verdad: clavePos por puesto+oficina)
+  var pUp = puesto.toUpperCase().trim();
+  var iataUp = iata.toUpperCase().trim();
+  for (var i = 0; i < DATA_NOMINAS.length; i++) {
+    var r = DATA_NOMINAS[i];
+    if (!r.oficina) continue;
+    var rIata = (IATA_MAP[r.oficina] || '').toUpperCase().trim();
+    if (r.puesto.toUpperCase().trim() === pUp && rIata === iataUp && r.clavePos) {
+      return r.clavePos;
+    }
+  }
+  // Fallback: DATA_POSICIONES (compatibilidad con datos anteriores)
+  var key = pUp + '|' + iataUp;
   return DATA_POSICIONES[key] || null;
+}
+
+// Migrar claves de DATA_POSICIONES → DATA_NOMINAS.clavePos (se ejecuta una vez al cargar)
+function migrarClavesANominas() {
+  var migradas = 0;
+  DATA_NOMINAS.forEach(function(r) {
+    if (r.clavePos) return; // ya tiene clave, no sobreescribir
+    if (!r.oficina || !r.puesto) return;
+    var iata = (IATA_MAP[r.oficina] || '').toUpperCase().trim();
+    if (!iata) return;
+    var key = r.puesto.toUpperCase().trim() + '|' + iata;
+    if (DATA_POSICIONES[key]) {
+      r.clavePos = DATA_POSICIONES[key];
+      migradas++;
+    }
+  });
+  if (migradas > 0) console.log('[Afimex] Claves migradas de DATA_POSICIONES a DATA_NOMINAS:', migradas);
 }
 
 
@@ -4118,11 +4196,9 @@ function configDiagnosticoHTML(){
   // Catálogos base
   const todosPPO    = [...new Set(Object.values(PUESTOS_POR_OFICINA).flat())];
   const todosNom    = DATA_NOMINAS.map(d=>d.puesto);
-  const todosPos    = Object.keys(DATA_POSICIONES).map(k=>k.split('|')[0]);
 
   const ppoNorm     = todosPPO.map(norm);
   const nomNorm     = todosNom.map(norm);
-  const posNorm     = todosPos.map(norm);
 
   // 0. Puestos con salNeto = 0 (necesitan revisión)
   DATA_NOMINAS.forEach(r=>{
@@ -4131,6 +4207,17 @@ function configDiagnosticoHTML(){
         tipo:'warn',
         cat:'Salario pendiente',
         msg:`<strong>${r.puesto}</strong> en <strong>${r.oficina||'—'}</strong> tiene <em>Salario Neto = $0</em>. Requiere revisión en el catálogo de Nóminas.`
+      });
+    }
+  });
+
+  // 0b. Puestos en nóminas sin clave de posición
+  DATA_NOMINAS.forEach(r=>{
+    if(!r.clavePos){
+      alertas.push({
+        tipo:'warn',
+        cat:'Clave de Posición',
+        msg:`<strong>${r.puesto}</strong> en <strong>${r.oficina||'—'}</strong> (${r.periodo}) <em>no tiene Clave de Posición</em>. El alta no mostrará la clave de relación laboral.`
       });
     }
   });
@@ -4157,39 +4244,10 @@ function configDiagnosticoHTML(){
     }
   });
 
-  // 3. Puestos en DATA_POSICIONES que no existen en PPO
-  todosPos.forEach(p=>{
-    if(!ppoNorm.includes(norm(p))){
-      alertas.push({
-        tipo:'warn',
-        cat:'Posiciones',
-        msg:`<strong>${p}</strong> está en Posiciones pero <em>no aparece en ninguna oficina</em>. La clave de relación laboral no se autocompletará.`
-      });
-    }
-  });
-
-  // 4. Nombres similares pero no iguales entre PPO y Nóminas (posibles typos)
+  // 3. Nombres similares pero no iguales entre PPO y Nóminas (posibles typos)
   todosPPO.forEach(p=>{
     const pn = norm(p);
     const similar = todosNom.find(n=>{
-      const nn = norm(n);
-      if(nn===pn) return false; // exacto, OK
-      // Detectar si uno contiene al otro o difieren en pocas letras
-      return (nn.includes(pn) || pn.includes(nn)) && Math.abs(nn.length-pn.length)<=6;
-    });
-    if(similar){
-      alertas.push({
-        tipo:'error',
-        cat:'Nombre inconsistente',
-        msg:`<strong>"${p}"</strong> (Oficinas) vs <strong>"${similar}"</strong> (Nóminas) — nombres similares pero diferentes. Puede causar que el alta no autocomplete el salario.`
-      });
-    }
-  });
-
-  // 5. Nombres similares entre PPO y Posiciones
-  todosPPO.forEach(p=>{
-    const pn = norm(p);
-    const similar = todosPos.find(n=>{
       const nn = norm(n);
       if(nn===pn) return false;
       return (nn.includes(pn) || pn.includes(nn)) && Math.abs(nn.length-pn.length)<=6;
@@ -4198,7 +4256,7 @@ function configDiagnosticoHTML(){
       alertas.push({
         tipo:'error',
         cat:'Nombre inconsistente',
-        msg:`<strong>"${p}"</strong> (Oficinas) vs <strong>"${similar}"</strong> (Posiciones) — nombres similares pero diferentes. La clave de relación laboral no se autocompletará correctamente.`
+        msg:`<strong>"${p}"</strong> (Oficinas) vs <strong>"${similar}"</strong> (Nóminas) — nombres similares pero diferentes. Puede causar que el alta no autocomplete el salario.`
       });
     }
   });
@@ -4223,9 +4281,12 @@ function configDiagnosticoHTML(){
     var tab='', subTab='', nomOficina='', label='', icon='→';
     if(a.cat==='Salario pendiente'){
       tab='nominas'; label='Ir a Nóminas';
-      // Extract office from msg
       var ofMatch = a.msg.match(/en <strong>([^<]+)<\/strong>/);
       if(ofMatch) nomOficina = ofMatch[1];
+    } else if(a.cat==='Clave de Posición'){
+      tab='nominas'; label='Ir a Nóminas';
+      var ofMatch2 = a.msg.match(/en <strong>([^<]+)<\/strong>/);
+      if(ofMatch2) nomOficina = ofMatch2[1];
     } else if(a.cat==='Nóminas'){
       tab='nominas'; label='Ir a Nóminas';
     } else if(a.cat==='Puestos por Oficina'){
@@ -4578,6 +4639,10 @@ function configNominasHTML(){
         style="width:100%;border:none;background:transparent;font-size:12px">
     </td>
     <td style="padding:4px 8px;border:1px solid var(--border)">
+      <input value="${r.clavePos||''}" placeholder="Clave..." onchange="DATA_NOMINAS[${r._i}].clavePos=this.value.trim().toUpperCase()"
+        style="width:100%;border:none;background:transparent;font-size:12px;font-weight:700;color:var(--afimex-orange);letter-spacing:1px;font-family:inherit">
+    </td>
+    <td style="padding:4px 8px;border:1px solid var(--border)">
       <select onchange="DATA_NOMINAS[${r._i}].sd=parseFloat(this.value)||0"
         style="width:100%;border:none;background:transparent;font-size:12px;font-family:inherit">
         <option value="">—</option>
@@ -4645,7 +4710,7 @@ function configNominasHTML(){
         <span style="font-size:12px;font-weight:400;color:var(--text2);margin-left:6px">(${DATA_NOMINAS.length} registros totales · ${data.length} mostrados)</span>
       </span>
       <div style="display:flex;gap:8px;align-items:center">
-        <input id="nom-search" placeholder="Buscar puesto..." oninput="window._nomSearch=this.value;render()"
+        <input id="nom-search" placeholder="Buscar puesto..." oninput="window._nomSearch=this.value;clearTimeout(window._nomSearchTimer);window._nomSearchTimer=setTimeout(function(){var v=document.getElementById('nom-search');var cur=v?v.selectionStart:-1;render();var v2=document.getElementById('nom-search');if(v2){v2.focus();if(cur>=0)try{v2.setSelectionRange(cur,cur);}catch(e){}}},180)"
           value="${window._nomSearch||''}"
           style="padding:5px 10px;border:1px solid var(--border2);border-radius:5px;font-size:12px;width:190px">
         <button onclick="configAgregarNomina()" class="btn btn-sm btn-primary" style="font-size:12px">+ Agregar</button>
@@ -4664,7 +4729,7 @@ function configNominasHTML(){
           <tr>
             ${_thSort('nominas','periodo','Periodo','110px')}
             ${_thSort('nominas','puesto','Puesto','')}
-            
+            ${_thSort('nominas','clavePos','Clave Pos.','130px')}
             ${_thSort('nominas','sd','SD','95px')}
             ${_thSort('nominas','sbc','SBC','95px')}
             ${_thSort('nominas','salNeto','Sal. Neto','105px')}
@@ -4674,7 +4739,7 @@ function configNominasHTML(){
             <th style="padding:6px 8px;border:1px solid #1A5FA8;width:75px;background:var(--afimex-blue)"></th>
           </tr>
         </thead>
-        <tbody>${rows||'<tr><td colspan="9" style="padding:30px;text-align:center;color:var(--text2)">Sin registros para esta oficina</td></tr>'}</tbody>
+        <tbody>${rows||'<tr><td colspan="10" style="padding:30px;text-align:center;color:var(--text2)">Sin registros para esta oficina</td></tr>'}</tbody>
       </table>
     </div>
   </div>`;
@@ -4693,6 +4758,7 @@ function configAgregarNomina(){
   cfgModalAbrir('➕ Nuevo registro — ' + (oficina||'Nómina'), [
     {key:'periodo',  label:'Periodo', type:'select', value:'SEMANA', options:['SEMANA','QUINCENA']},
     {key:'puesto',   label:'Puesto',  type:'select', value:puestosLista[0]||'', options:puestosLista},
+    {key:'clavePos', label:'Clave de Posición', value:''},
     {key:'sd',  label:'Salario Diario (SD)', type:'select', value:DATA_SALARIOS[0]?String(DATA_SALARIOS[0].sd):'', options:DATA_SALARIOS.map(function(s){return String(s.sd);})},
     {key:'sbc', label:'SBC',                  type:'select', value:DATA_SALARIOS[0]?String(DATA_SALARIOS[0].sbc):'', options:DATA_SALARIOS.map(function(s){return String(s.sbc);})},
     {key:'salNeto',  label:'Salario Neto', type:'number', value:''},
@@ -4700,15 +4766,16 @@ function configAgregarNomina(){
     {key:'zona',     label:'Zona', type:'select', value:'A', options:['A','B','C']},
   ], vals=>{
     DATA_NOMINAS.push({
-      periodo: vals.periodo,
-      puesto:  vals.puesto.trim(),
-      oficina: oficina,
-      sd:      parseFloat(vals.sd)||0,
-      sbc:     parseFloat(vals.sbc)||0,
-      salNeto: parseFloat(vals.salNeto)||0,
-      rp:      vals.rp.trim(),
-      zona:    vals.zona,
-      sdPres:  0,
+      periodo:  vals.periodo,
+      puesto:   vals.puesto.trim(),
+      clavePos: vals.clavePos.trim().toUpperCase(),
+      oficina:  oficina,
+      sd:       parseFloat(vals.sd)||0,
+      sbc:      parseFloat(vals.sbc)||0,
+      salNeto:  parseFloat(vals.salNeto)||0,
+      rp:       vals.rp.trim(),
+      zona:     vals.zona,
+      sdPres:   0,
     });
     render();
   });
@@ -4871,11 +4938,6 @@ function configPosicionesHTML(){
 
     var row = '<tr style="background:'+bg+'">'
       +'<td style="padding:4px 8px;border:1px solid var(--border)"><input value="'+f.puesto+'" data-oldkey="'+safeKey+'" data-oldpuesto="'+safePuesto+'" onchange="posicionRenombrar(this.dataset.oldkey,this.dataset.oldpuesto,this.value)" style="width:100%;border:none;background:transparent;font-size:13px;font-weight:600;font-family:inherit"></td>'
-      +'<td style="padding:4px 8px;border:1px solid var(--border);width:160px">'
-      +'<input value="'+f.clave+'" placeholder="Clave..." '
-      +'onchange="posicionCambiarClaveDirecta(\''+safeKey+'\',this.value)" '
-      +'style="width:100%;border:none;background:transparent;font-size:12px;font-weight:700;color:var(--afimex-orange);font-family:inherit">'
-      +'</td>'
       +'<td style="padding:4px 8px;border:1px solid var(--border)">'+descCell+'</td>'
       +'<td style="padding:4px 8px;border:1px solid var(--border);text-align:center;white-space:nowrap;width:60px">'
       +(isOpen ? '' : '<button onclick="posicionEliminar(\''+safeKey+'\')" style="background:#fee2e2;color:#dc2626;border:none;border-radius:4px;padding:2px 8px;cursor:pointer;font-size:11px">✕</button>')
@@ -4884,7 +4946,7 @@ function configPosicionesHTML(){
 
     if(isOpen){
       row += '<tr style="background:'+(i%2===0?'#fffbf5':'#fff9f0')+'">';
-      row += '<td colspan="4" style="padding:6px 12px 8px;border:1px solid var(--border);border-top:none">';
+      row += '<td colspan="3" style="padding:6px 12px 8px;border:1px solid var(--border);border-top:none">';
       row += '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">';
       row += '<span style="font-size:11px;color:var(--text2)">💡 Editando: <strong>'+f.puesto+'</strong></span>';
       row += '<button onclick="configGuardar()" style="background:var(--afimex-blue);color:white;border:none;border-radius:4px;padding:5px 14px;cursor:pointer;font-size:12px;font-weight:700">💾 Guardar cambios</button>';
@@ -4898,7 +4960,8 @@ function configPosicionesHTML(){
     +'<div style="padding:12px 14px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">'
     +'<span style="font-weight:600;font-size:14px">📌 Posiciones ('+filas.length+' registros)</span>'
     +'<div style="display:flex;gap:8px;flex-wrap:wrap">'
-    +'<input id="pos-search" placeholder="Buscar puesto, clave o descripción..." oninput="window._posSearch=this.value;render()" '
+    +'<input id="pos-search" placeholder="Buscar puesto o descripción..." '
+    +'oninput="window._posSearch=this.value;clearTimeout(window._posSearchTimer);window._posSearchTimer=setTimeout(function(){var v=document.getElementById(\'pos-search\');var cur=v?v.selectionStart:-1;render();var v2=document.getElementById(\'pos-search\');if(v2){v2.focus();if(cur>=0)try{v2.setSelectionRange(cur,cur);}catch(e){}}},180)" '
     +'value="'+(window._posSearch||'')+'" '
     +'style="padding:5px 10px;border:1px solid var(--border2);border-radius:5px;font-size:12px;width:240px">'
     +'<button onclick="posicionAgregar()" class="btn btn-sm btn-primary" style="font-size:12px">+ Nueva posición</button>'
@@ -4906,12 +4969,11 @@ function configPosicionesHTML(){
     +'<div style="overflow-x:auto;max-height:560px;overflow-y:auto">'
     +'<table style="width:100%;border-collapse:collapse;font-size:13px">'
     +'<thead style="position:sticky;top:0;z-index:2"><tr>'
-    +_thSort('posiciones','puesto','Puesto','220px')
-    +_thSort('posiciones','clave','Clave de Posición','160px')
+    +_thSort('posiciones','puesto','Puesto','280px')
     +'<th style="padding:6px 10px;border:1px solid #1A5FA8;background:var(--afimex-blue);color:white;font-size:11px;font-weight:500;text-align:left">Descripción del Puesto</th>'
     +'<th style="padding:6px 8px;border:1px solid #1A5FA8;width:60px;background:var(--afimex-blue)"></th>'
     +'</tr></thead>'
-    +'<tbody>'+(rows||'<tr><td colspan="4" style="padding:30px;text-align:center;color:var(--text2)">Sin resultados</td></tr>')+'</tbody>'
+    +'<tbody>'+(rows||'<tr><td colspan="3" style="padding:30px;text-align:center;color:var(--text2)">Sin resultados</td></tr>')+'</tbody>'
     +'</table></div></div>';
 }
 
@@ -4925,19 +4987,62 @@ function posicionEliminar(key){
   render();
 }
 function posicionAgregar(){
+  const oficinasDisponibles = Object.keys(IATA_MAP).sort();
   cfgModalAbrir('➕ Nueva Posición', [
     {key:'puesto',       label:'Nombre del Puesto',    value:''},
-    {key:'clave',        label:'Clave de Posición',    value:''},
+    {key:'oficina',      label:'Oficina donde aplica', type:'select', value: oficinasDisponibles[0]||'', options: oficinasDisponibles},
+    {key:'periodo',      label:'Periodo de nómina',    type:'select', value:'SEMANA', options:['SEMANA','QUINCENA']},
     {key:'actividades',  label:'Actividades (una por línea)', value:'', type:'textarea'},
   ], vals=>{
     if(!vals.puesto.trim()) return;
     const puesto = vals.puesto.trim().toUpperCase();
-    const key = puesto + '|';
+    const oficina = vals.oficina.trim();
+
+    // 1. Agregar a DATA_POSICIONES (solo para mantener la lista de puestos únicos)
+    const iata = IATA_MAP[oficina] || '';
+    const key = puesto + '|' + iata;
     DATA_POSICIONES[key] = vals.clave.trim();
+
+    // 2. Agregar a PUESTOS_POR_OFICINA para que aparezca en el alta
+    if(oficina){
+      if(!PUESTOS_POR_OFICINA[oficina]) PUESTOS_POR_OFICINA[oficina] = [];
+      if(!PUESTOS_POR_OFICINA[oficina].map(p=>p.toUpperCase()).includes(puesto)){
+        PUESTOS_POR_OFICINA[oficina].push(puesto);
+      }
+    }
+
+    // 3. Agregar registro de nómina vacío para que el puesto sea seleccionable en el alta
+    const yaExiste = DATA_NOMINAS.some(r =>
+      r.puesto.toUpperCase().trim() === puesto &&
+      (r.oficina||'').toLowerCase() === (oficina||'').toLowerCase() &&
+      r.periodo === vals.periodo
+    );
+    if(!yaExiste){
+      const rpDefault = DATA_REGISTROS_PATRONALES[0] ? DATA_REGISTROS_PATRONALES[0].rp : '';
+      DATA_NOMINAS.push({
+        periodo: vals.periodo,
+        puesto:  puesto,
+        oficina: oficina,
+        sd:      0,
+        sbc:     0,
+        salNeto: 0,
+        rp:      rpDefault,
+        zona:    'A',
+        sdPres:  0,
+      });
+    }
+
+    // 4. Agregar actividades
     if(vals.actividades.trim()){
       ACTIVIDADES[puesto] = vals.actividades.split('\n').map(l=>l.trim()).filter(l=>l.length>0);
     }
-    render();
+
+    // Guardar y navegar
+    window._configTab = _configTab = 'posiciones';
+    window._posSearch = '';
+    window._posPuestoSel = puesto;
+    configGuardar();
+    showToast('✓ Posición agregada. Ve a Nóminas para capturar el salario del puesto.');
   });
 }
 
@@ -4969,6 +5074,7 @@ async function configGuardar(){
   // Subir también a Google Sheets si está configurado
   await syncAll();
   showToast('✓ Configuración guardada' + (tieneGSheets() ? ' y sincronizada con Drive' : ''));
+  render();
 }
 
 // Load saved config on startup
@@ -6527,13 +6633,14 @@ function configEditarNomina(i){
   cfgModalAbrir('✏️ Editar — ' + (oficina||'Nómina'), [
     {key:'periodo', label:'Periodo', type:'select', value:r.periodo, options:['SEMANA','QUINCENA']},
     {key:'puesto',  label:'Puesto',  type:'select', value:r.puesto, options:puestosLista},
+    {key:'clavePos',label:'Clave de Posición', value:r.clavePos||''},
     {key:'sd',  label:'Salario Diario (SD)', type:'select', value:String(r.sd), options:DATA_SALARIOS.map(function(s){return String(s.sd);})},
     {key:'sbc', label:'SBC',                  type:'select', value:String(r.sbc), options:DATA_SALARIOS.map(function(s){return String(s.sbc);})},
     {key:'salNeto', label:'Salario Neto',         type:'number', value:r.salNeto},
     {key:'rp',      label:'Registro Patronal',    type:'select', value:r.rp, options:rpLista},
     {key:'zona',    label:'Zona', type:'select', value:r.zona, options:['A','B','C']},
   ], vals=>{
-    DATA_NOMINAS[i] = {...r, ...vals, oficina, sd:parseFloat(vals.sd)||0, sbc:parseFloat(vals.sbc)||0, salNeto:parseFloat(vals.salNeto)||0};
+    DATA_NOMINAS[i] = {...r, ...vals, clavePos:(vals.clavePos||'').trim().toUpperCase(), oficina, sd:parseFloat(vals.sd)||0, sbc:parseFloat(vals.sbc)||0, salNeto:parseFloat(vals.salNeto)||0};
     render();
   });
 }
@@ -6587,6 +6694,7 @@ function configEditarDir(of){
   try{document.getElementById('date-display').textContent=new Date().toLocaleDateString('es-MX',{weekday:'long',year:'numeric',month:'long',day:'numeric'});}catch(e){}
   try{await loadData();}catch(e){}
   try{loadConfig();}catch(e){}
+  try{migrarClavesANominas();}catch(e){}
   try{renderNav();}catch(e){}
   try{mostrarLoginInicial();}catch(e){render();}
   try{setSyncStatus(tieneGSheets()?'ok':'local');}catch(e){}
