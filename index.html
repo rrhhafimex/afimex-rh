@@ -783,7 +783,7 @@ function renderNav(){
   document.getElementById('nav-links').innerHTML=tabs.map(t=>`<button class="nav-btn ${currentTab===t?'active':''}" onclick="showTab('${t}')">${TAB_LABELS[t]}</button>`).join('');
 
   const syncBtn = tieneGSheets()
-    ? `<button class="btn-role" onclick="subirCatalogosANube()" title="Subir catálogos locales a Google Sheets" style="background:rgba(255,255,255,.12);margin-right:4px">⬆ Subir</button><button class="btn-role" onclick="sincronizarDesdeGSheets()" title="Descargar datos de Google Sheets" style="background:rgba(255,255,255,.15);margin-right:6px">⬇ Bajar</button>`
+    ? `${currentRole === 'admin' ? `<button class="btn-role" onclick="subirCatalogosANube()" title="Subir catálogos locales a Google Sheets" style="background:rgba(255,255,255,.12);margin-right:4px">⬆ Subir</button>` : ''}<button class="btn-role" onclick="sincronizarDesdeGSheets()" title="Descargar datos de Google Sheets" style="background:rgba(255,255,255,.15);margin-right:6px">⬇ Bajar</button>`
     : '';
 
   const userName = currentUser ? currentUser.nombre : '';
