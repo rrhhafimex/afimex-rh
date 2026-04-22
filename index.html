@@ -315,7 +315,7 @@ var OFICINAS_DIR = {
   "default": "Av. Adolfo Ruiz Cortines 3247 Col. Coyoacan, CP 64510, Monterrey, NL."
 };
 
-const TABS_GEN = ['altas','baja','seguimiento','docs'];
+const TABS_GEN = ['altas','baja','seguimiento','docs','folios'];
 const TABS_ADM = ['altas','baja','seguimiento','base','docs','finiquitos','incapacidades','usuarios','config'];
 const TAB_LABELS = {altas:'📋 Alta de Expediente',baja:'🚪 Solicitud de Baja',seguimiento:'📊 Seguimiento de Ingresos',folios:'📁 Folios de Salida',base:'🗄️ Base de Datos',docs:'🖨️ Impresión de Documentos',usuarios:'👥 Usuarios',config:'⚙️ Catálogo',finiquitos:'💰 Finiquitos',incapacidades:'🏥 Incapacidades'};
 
@@ -407,6 +407,10 @@ async function gsCall(action, data){
       jsonpSend('Cat_RegPatronal',  c.registrosPatronales),
       jsonpSend('Cat_Salarios',     c.salarios),
     ];
+    // SV Folios — solo enviar si hay registros para no borrar la hoja
+    if(data.svFolios && data.svFolios.length > 0){
+      promises.push(jsonpSend('SV_Folios', data.svFolios));
+    }
     // Solo enviar usuarios si hay al menos uno — evita borrar la lista en la nube
     if(usuarios && usuarios.length > 0){
       promises.push(jsonpSend('Usuarios', usuarios));
@@ -613,6 +617,10 @@ async function sincronizarDesdeGSheets(){
         if(c.docFiniq&&Object.keys(c.docFiniq).length>0){ window.DOC_FINIQ_CONFIG=c.docFiniq; localStorage.setItem('afimex-config-docfiniq',JSON.stringify(c.docFiniq)); }
       }
       try{ _incCargarDeRes(res); }catch(e){}
+      // Cargar folios SV desde la nube
+      if(res.svFolios && res.svFolios.length > 0){
+        localStorage.setItem('afimex-sv-folios', JSON.stringify(res.svFolios));
+      }
       hideLoading();
       setSyncStatus('ok');
       showToast('✓ Datos y catálogos sincronizados correctamente');
@@ -639,6 +647,8 @@ async function syncAll(){
 
   if(!tieneGSheets()){ setSyncStatus('local'); return; }
 
+  const svFolios = JSON.parse(localStorage.getItem('afimex-sv-folios')||'[]');
+
   // Empaquetar catálogos para enviar a GSheets
   // Comprimir nóminas eliminando campos con valor 0 o vacío
   const nominasCompact = DATA_NOMINAS.map(r=>{
@@ -662,7 +672,7 @@ async function syncAll(){
   try{
     setSyncStatus('saving');
     const res = await gsCall('saveAll', {
-      db, seguimientos, folios: foliosData, finiquitos: finiquitosDB, catalogos
+      db, seguimientos, folios: foliosData, finiquitos: finiquitosDB, svFolios, catalogos
     });
     setSyncStatus(res.ok ? 'ok' : 'error');
   } catch(e){
@@ -2240,6 +2250,53 @@ function bajaHTML(){
 </div>`;
 }
 
+// ── Vista de folios de solo lectura (para Generalista) ──
+function foliosVistaHTML(){
+  const histDB = db.filter(r=>r.folio).map(r=>({
+    folio: r.folio, nombre: r.nombre, puesto: r.puesto||'—',
+    oficina: r.oficina||'—', fecha: r.fechaBaja||''
+  }));
+  let histSV=[];
+  try{
+    histSV=(JSON.parse(localStorage.getItem('afimex-sv-folios')||'[]')).map(s=>({
+      folio:s.folio, nombre:s.nombre||'—', puesto:'Entrevista Salida',
+      oficina:s.oficina||'—', fecha:s.fecha||''
+    }));
+  }catch(e){}
+  let histMan=[];
+  try{
+    histMan=(JSON.parse(localStorage.getItem('afimex-folios-manual')||'[]')).map(m=>({
+      folio:m.folio, nombre:m.nombre||'—', puesto:'Manual',
+      oficina:m.oficina||'—', fecha:m.fecha||''
+    }));
+  }catch(e){}
+  const historial=[...histDB,...histSV,...histMan].sort((a,b)=>b.folio.localeCompare(a.folio));
+
+  return `<div class="content" style="padding:20px">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+      <h2 style="font-size:16px;font-weight:700;color:var(--afimex-blue)">📁 Folios Generados</h2>
+      <span style="font-size:12px;color:var(--text2)">${historial.length} folios en total</span>
+    </div>
+    ${historial.length===0
+      ? `<div class="empty-state">Aún no se han generado folios.</div>`
+      : `<div style="overflow-x:auto">
+        <table class="folios-table">
+          <thead><tr>
+            <th>Folio</th><th>Colaborador</th><th>Puesto / Tipo</th>
+            <th>Oficina</th><th>Fecha baja</th>
+          </tr></thead>
+          <tbody>${historial.map(h=>`<tr>
+            <td><span class="folio-badge">${h.folio}</span></td>
+            <td style="font-size:12px;font-weight:600">${h.nombre}</td>
+            <td style="font-size:12px">${h.puesto}</td>
+            <td style="font-size:12px">${h.oficina}</td>
+            <td style="font-size:12px">${h.fecha}</td>
+          </tr>`).join('')}</tbody>
+        </table>
+      </div>`}
+  </div>`;
+}
+
 function foliosHTML(){
   // ── Fuente 1: folios de bajas normales (db) ──────────────────
   const histDB = db.filter(r=>r.folio).map(r=>({
@@ -2499,7 +2556,7 @@ function render(){
     mostrarLoginInicial();
     return;
   }
-  const map={altas:altasHTML,baja:bajaHTML,seguimiento:seguimientoHTML,folios:foliosHTML,base:baseHTML,docs:docsHTML,config:configHTML,finiquitos:finiquitosHTML,incapacidades:incapacidadesHTML,usuarios:()=>'<div id="usuarios-loading" style="padding:20px;color:var(--text2)">Cargando...</div>'};
+  const map={altas:altasHTML,baja:bajaHTML,seguimiento:seguimientoHTML,folios:currentRole==='generalista'?foliosVistaHTML:foliosHTML,base:baseHTML,docs:docsHTML,config:configHTML,finiquitos:finiquitosHTML,incapacidades:incapacidadesHTML,usuarios:()=>'<div id="usuarios-loading" style="padding:20px;color:var(--text2)">Cargando...</div>'};
   const _roleTabsR = currentRole==='admin' ? TABS_ADM :
                      currentRole==='generalista' ? TABS_GEN :
                      currentRole==='reclutador' ? TABS_REC :
@@ -2836,6 +2893,8 @@ async function guardarBaja(){
       const _svList=JSON.parse(localStorage.getItem('afimex-sv-folios')||'[]');
       _svList.unshift({folio:window._bajaSVFolio,nombre:_svN,oficina:_svO,fecha:new Date().toLocaleDateString('es-MX'),generadoPor:(currentUser&&(currentUser.nombre||currentUser.usuario))||'—'});
       localStorage.setItem('afimex-sv-folios',JSON.stringify(_svList));
+      // Subir inmediatamente a la nube
+      if(tieneGSheets()) jsonpSend('SV_Folios', _svList);
     }catch(e){}
   }
   const _svTag=window._bajaTipo==='SV'&&window._bajaSVFolio?` | SV: ${window._bajaSVFolio}`:'';
@@ -5099,11 +5158,12 @@ var CAT_DEDUCCIONES  = [[7, "Pensi\u00f3n alimenticia"], [14, "Seguro de viviend
 function _fst(){ return window._finiqState || (window._finiqState = {
   nombre:'', numNomina:'', puesto:'', oficina:'Monterrey',
   fechaIngreso:'', fechaBaja: new Date().toISOString().split('T')[0],
+  tipoFiniquito: 'separacion',  // 'separacion' | 'termino' | 'abandono'
   sdOpt:'sd1', sdOtro:'', sdPres:'',
   fechaIniAño: new Date().getFullYear()+'-01-01',
-  tipoPrest: 'ley',   // 'ley' | 'gerentes'
-  percs: [],          // [{no, concepto, importe}] percepciones adicionales
-  deds: [],           // [{no, concepto, importe}]
+  tipoPrest: 'ley',
+  percs: [],
+  deds: [],
   bonosRec:'', bonosRecVal:'',
   otrasPerc:'', otrasPercVal:'',
   indemVal:'',
@@ -5164,6 +5224,7 @@ async function guardarFiniquito(){
     oficina:     s.oficina||'',
     fechaIngreso:s.fechaIngreso||'',
     fechaBaja:   s.fechaBaja||'',
+    tipoFiniquito: s.tipoFiniquito||'separacion',
     tipoPrest:   s.tipoPrest||'ley',
     sdBase:      sdL1,
     sdPres:      sdL2,
@@ -5205,6 +5266,7 @@ function finiquitosHTML(){
     +'</div>'
     // ── Limpiar ──
     +'<button onclick="finiqLimpiar()" class="btn btn-secondary" style="font-size:12px;padding:6px 12px">🧹 Nuevo / Limpiar</button>'
+    +'<button onclick="finiqModalReporte()" class="btn btn-secondary" style="font-size:12px;padding:6px 12px">📄 Reporte</button>'
     +'<button onclick="guardarFiniquito()" class="btn" style="background:#16a34a;color:white;border:none;padding:6px 12px;border-radius:var(--radius-sm);font-size:12px;font-weight:600;cursor:pointer">💾 Registrar</button>'
     +'<button onclick="printFiniquito()" class="btn btn-blue" style="font-size:12px;padding:6px 12px">🖨 Finiquito</button>'
     +'<button onclick="printDocumentosFiniquito()" class="btn" style="background:#0369a1;color:white;border:none;padding:6px 12px;border-radius:var(--radius-sm);font-size:12px;font-weight:600;cursor:pointer">📄 Documentos</button>'
@@ -5442,6 +5504,161 @@ function finiqFiltroLimpiar(){
 }
 
 // ── EXPORTAR finiquitos a JSON ──────────────────────────────────
+// ── Modal de filtros para reporte de finiquitos ──
+function finiqModalReporte(){
+  if(!finiquitosDB||finiquitosDB.length===0){ showToast('No hay finiquitos registrados','#dc2626'); return; }
+  const hoy=new Date().toISOString().split('T')[0];
+  const primerDiaMes=hoy.substring(0,7)+'-01';
+  const overlay=document.createElement('div');
+  overlay.className='modal-overlay';
+  overlay.id='finiq-reporte-overlay';
+  overlay.innerHTML=`
+  <div class="modal-box" style="max-width:460px;width:95vw">
+    <div class="modal-title">📄 Generar Reporte de Finiquitos</div>
+    <div style="display:flex;flex-direction:column;gap:14px">
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+        <div class="form-group">
+          <label>Fecha de baja — desde</label>
+          <input type="date" id="frep-desde" value="${primerDiaMes}"
+            style="width:100%;padding:8px 10px;border:1.5px solid var(--border);border-radius:var(--radius-sm);font-size:13px;font-family:inherit">
+        </div>
+        <div class="form-group">
+          <label>Fecha de baja — hasta</label>
+          <input type="date" id="frep-hasta" value="${hoy}"
+            style="width:100%;padding:8px 10px;border:1.5px solid var(--border);border-radius:var(--radius-sm);font-size:13px;font-family:inherit">
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label>Tipo de finiquito <span style="color:var(--text2);font-weight:400">(opcional — dejar en "Todos" para incluir todos)</span></label>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px">
+          ${[
+            {v:'', l:'Todos', icon:'📋'},
+            {v:'separacion', l:'Separación Voluntaria', icon:'🤝'},
+            {v:'termino',    l:'Término de Contrato',   icon:'📄'},
+            {v:'abandono',   l:'Abandono de Trabajo',   icon:'🚶'},
+          ].map((opt,idx)=>`
+          <label style="cursor:pointer">
+            <input type="radio" name="frep-tipo" value="${opt.v}" ${idx===0?'checked':''} style="display:none" id="frep-tipo-${idx}">
+            <div onclick="frepSelTipo(${idx})" id="frep-tipo-box-${idx}"
+              style="padding:8px 12px;border-radius:var(--radius-sm);border:2px solid ${idx===0?'var(--afimex-orange)':'var(--border)'};
+                     background:${idx===0?'var(--afimex-orange-light)':'white'};
+                     font-size:12px;font-weight:${idx===0?'700':'500'};
+                     color:${idx===0?'var(--afimex-orange)':'var(--text2)'};cursor:pointer;transition:all .15s;text-align:center">
+              <div style="font-size:16px;margin-bottom:2px">${opt.icon}</div>${opt.l}
+            </div>
+          </label>`).join('')}
+        </div>
+      </div>
+
+    </div>
+    <div class="btn-row" style="margin-top:16px">
+      <button class="btn btn-secondary" onclick="document.getElementById('finiq-reporte-overlay').remove()">Cancelar</button>
+      <button class="btn btn-primary" onclick="finiqGenerarReporte()">🖨 Generar Reporte</button>
+    </div>
+  </div>`;
+  document.body.appendChild(overlay);
+}
+
+function frepSelTipo(idx){
+  for(let i=0;i<4;i++){
+    const box=document.getElementById('frep-tipo-box-'+i);
+    const radio=document.getElementById('frep-tipo-'+i);
+    if(!box) continue;
+    const active=i===idx;
+    box.style.borderColor=active?'var(--afimex-orange)':'var(--border)';
+    box.style.background=active?'var(--afimex-orange-light)':'white';
+    box.style.color=active?'var(--afimex-orange)':'var(--text2)';
+    box.style.fontWeight=active?'700':'500';
+    if(radio) radio.checked=active;
+  }
+}
+
+function finiqGenerarReporte(){
+  const desde=document.getElementById('frep-desde')?.value||'';
+  const hasta=document.getElementById('frep-hasta')?.value||'';
+  const tipo=document.querySelector('input[name="frep-tipo"]:checked')?.value||'';
+
+  let datos=[...finiquitosDB].sort((a,b)=>new Date(b.fechaBaja)-new Date(a.fechaBaja));
+  if(desde) datos=datos.filter(f=>(f.fechaBaja||'')>=desde);
+  if(hasta) datos=datos.filter(f=>(f.fechaBaja||'')<=hasta);
+  if(tipo)  datos=datos.filter(f=>(f.tipoFiniquito||'separacion')===tipo);
+
+  document.getElementById('finiq-reporte-overlay')?.remove();
+
+  const tipoLabels={separacion:'Separación Voluntaria',termino:'Término de Contrato',abandono:'Abandono de Trabajo'};
+  const tipoIconos={separacion:'🤝',termino:'📄',abandono:'🚶'};
+  const fmtMXN=v=>'$'+Number(v||0).toLocaleString('es-MX',{minimumFractionDigits:2,maximumFractionDigits:2});
+  const fmtD=v=>v?(v.includes('-')?v.split('-').reverse().join('/'):v):'—';
+  const subtitulo=[
+    desde&&hasta?`Periodo: ${fmtD(desde)} al ${fmtD(hasta)}`:desde?`Desde: ${fmtD(desde)}`:hasta?`Hasta: ${fmtD(hasta)}`:'Todas las fechas',
+    tipo?`Tipo: ${tipoLabels[tipo]}`:'Todos los tipos',
+  ].join(' · ');
+
+  const totPercs=datos.reduce((a,f)=>a+(f.sumaPercs||0),0);
+  const totDeds =datos.reduce((a,f)=>a+(f.sumaDeds||0),0);
+  const totNeto =datos.reduce((a,f)=>a+(f.neto||0),0);
+
+  const filas=datos.map((f,i)=>{
+    const tl=tipoLabels[f.tipoFiniquito||'separacion']||'—';
+    const ti=tipoIconos[f.tipoFiniquito||'separacion']||'';
+    return `<tr style="background:${i%2===0?'white':'#f9fafb'}">
+      <td>${f.numNomina||'—'}</td>
+      <td style="font-weight:600">${f.nombre||'—'}</td>
+      <td>${f.puesto||'—'}</td>
+      <td>${f.oficina||'—'}</td>
+      <td style="text-align:center">${fmtD(f.fechaIngreso)}</td>
+      <td style="text-align:center">${fmtD(f.fechaBaja)}</td>
+      <td style="text-align:center">${ti} ${tl}</td>
+      <td style="text-align:right">${fmtMXN(f.sdBase)}</td>
+      <td style="text-align:right">${fmtMXN(f.sdPres)}</td>
+      <td style="text-align:right;font-weight:700;color:#1A5FA8">${fmtMXN(f.sumaPercs)}</td>
+      <td style="text-align:right;color:#dc2626">${fmtMXN(f.sumaDeds)}</td>
+      <td style="text-align:right;font-weight:700;color:#16a34a">${fmtMXN(f.neto)}</td>
+    </tr>`;
+  }).join('');
+
+  const w=window.open('','_blank');
+  w.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8">
+  <title>Reporte de Finiquitos — Afimex RH</title>
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0;}
+    body{font-family:Arial,sans-serif;font-size:10px;padding:18px;color:#1a1a2e}
+    h1{font-size:14px;color:#1A5FA8;margin-bottom:3px}
+    .sub{font-size:10px;color:#6b7280;margin-bottom:3px}
+    .filtros{font-size:10px;color:#E8650A;font-weight:700;background:#fff7ed;padding:5px 10px;border-radius:4px;display:inline-block;margin-bottom:12px;border:1px solid #fed7aa}
+    table{width:100%;border-collapse:collapse}
+    th{background:#1A5FA8;color:white;padding:5px 7px;text-align:left;font-size:9px;font-weight:600}
+    td{padding:4px 7px;border-bottom:1px solid #e5e7eb;font-size:9px;vertical-align:middle}
+    .totales td{background:#f0fdf4;font-weight:700;border-top:2px solid #1A5FA8}
+    @media print{body{padding:10px}@page{size:letter landscape;margin:1cm}}
+  </style>
+  </head><body>
+  <h1>💰 Reporte de Finiquitos — Afimex Paquetería</h1>
+  <div class="sub">Generado el ${new Date().toLocaleDateString('es-MX',{weekday:'long',year:'numeric',month:'long',day:'numeric'})} · ${datos.length} registro${datos.length!==1?'s':''}</div>
+  <div class="filtros">📋 ${subtitulo}</div>
+  <table>
+    <thead><tr>
+      <th>Nóm.</th><th>Nombre</th><th>Puesto</th><th>Oficina</th>
+      <th>F. Alta</th><th>F. Baja</th><th>Tipo Finiquito</th>
+      <th>SD</th><th>SD Pres.</th><th>Percepciones</th><th>Deducciones</th><th>Neto</th>
+    </tr></thead>
+    <tbody>
+      ${filas||'<tr><td colspan="12" style="text-align:center;padding:16px;color:#6b7280">Sin registros con los filtros seleccionados</td></tr>'}
+      <tr class="totales">
+        <td colspan="9" style="text-align:right">Totales (${datos.length} registros):</td>
+        <td style="text-align:right">${fmtMXN(totPercs)}</td>
+        <td style="text-align:right;color:#dc2626">${fmtMXN(totDeds)}</td>
+        <td style="text-align:right;color:#16a34a">${fmtMXN(totNeto)}</td>
+      </tr>
+    </tbody>
+  </table>
+  <script>window.onload=function(){window.print();}<\/script>
+  </body></html>`);
+  w.document.close();
+}
+
 function finiqExportar(){
   if(!finiquitosDB||finiquitosDB.length===0){showToast('No hay finiquitos para exportar','#dc2626');return;}
   const datos={version:'AfimexRH-V14',fecha:new Date().toISOString(),finiquitos:finiquitosDB};
@@ -5675,6 +5892,28 @@ function finiqFormHTML(){
         <div style="padding:6px 10px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius-sm);font-size:13px">${ofDir.lugar}</div></div>
       <div class="form-group" style="grid-column:2/-1"><label>Dirección</label>
         <div style="padding:6px 10px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius-sm);font-size:13px">${ofDir.dir}</div></div>
+      <div class="form-group" style="grid-column:1/-1">
+        <label style="font-size:12px;font-weight:700;color:var(--afimex-blue);text-transform:uppercase;letter-spacing:.5px">Motivo del Finiquito</label>
+        <div style="display:flex;gap:10px;margin-top:4px;flex-wrap:wrap">
+          ${[
+            {v:'separacion', l:'Separación Voluntaria',  icon:'🤝'},
+            {v:'termino',    l:'Término de Contrato',     icon:'📄'},
+            {v:'abandono',   l:'Abandono de Trabajo',     icon:'🚶'},
+          ].map(opt=>`
+          <label style="flex:1;min-width:160px;cursor:pointer">
+            <input type="radio" name="finiq-tipo" value="${opt.v}" ${(s.tipoFiniquito||'separacion')===opt.v?'checked':''} style="display:none">
+            <div onclick="_fst().tipoFiniquito='${opt.v}';finiqRefresh()"
+              style="text-align:center;padding:10px 8px;border-radius:var(--radius-sm);
+                     border:2px solid ${(s.tipoFiniquito||'separacion')===opt.v?'var(--afimex-orange)':'var(--border)'};
+                     background:${(s.tipoFiniquito||'separacion')===opt.v?'var(--afimex-orange-light)':'white'};
+                     font-size:12px;font-weight:${(s.tipoFiniquito||'separacion')===opt.v?'700':'500'};
+                     color:${(s.tipoFiniquito||'separacion')===opt.v?'var(--afimex-orange)':'var(--text2)'};cursor:pointer;transition:all .15s">
+              <div style="font-size:18px;margin-bottom:4px">${opt.icon}</div>
+              ${opt.l}
+            </div>
+          </label>`).join('')}
+        </div>
+      </div>
     </div>
   </div>
 
@@ -7364,6 +7603,52 @@ function _incCargarDeRes(res){
   try{await loadData();}catch(e){}
   try{loadConfig();}catch(e){}
   try{migrarClavesANominas();}catch(e){}
+  // ── Migrar folios manuales históricos (solo si no hay datos previos) ──
+  try{
+    const _existMan = JSON.parse(localStorage.getItem('afimex-folios-manual')||'[]');
+    if(_existMan.length === 0){
+      const _foliosHist = [
+        {folio:'TRC-3.26',nombre:'SERGIO LUIS QUINTEROS ESQUIVEL',oficina:'Torreón',fecha:'2026-01-01'},
+        {folio:'TRC-2.26',nombre:'PERENGANITA MARROQUI',oficina:'Torreón',fecha:'2026-01-01'},
+        {folio:'TRC-1.26',nombre:'CESAR GUILLERMO HOYOS LOPEZ',oficina:'Torreón',fecha:'2026-01-01'},
+        {folio:'TAM-2.26',nombre:'JUAN JOSE LUGO TICANTE',oficina:'Tampico',fecha:'2026-01-01'},
+        {folio:'TAM-1.26',nombre:'JAIME DOMINGUEZ VAZQUEZ',oficina:'Tampico',fecha:'2026-01-01'},
+        {folio:'SLW-1.26',nombre:'FULANITO MARTINEZ',oficina:'Saltillo',fecha:'2026-01-01'},
+        {folio:'SLP-3.26',nombre:'ARANZA MICHEL GRIMALDO ESPARZA',oficina:'San Luis Potosí',fecha:'2026-01-01'},
+        {folio:'SLP-2.26',nombre:'EFRAIN VIRAMONTES BECERRA',oficina:'San Luis Potosí',fecha:'2026-01-01'},
+        {folio:'SLP-1.26',nombre:'CESAR GOMEZ GOVEA',oficina:'San Luis Potosí',fecha:'2026-01-01'},
+        {folio:'RH-1.26',nombre:'FAUSTO GERARDO SANCHEZ GOMEZ',oficina:'Recursos Humanos',fecha:'2026-01-01'},
+        {folio:'POR-2.26',nombre:'ALEJANDRO GUADALUPE GALLEGOS CARRIZALEZ',oficina:'Porteo',fecha:'2026-01-01'},
+        {folio:'POR-1.26',nombre:'REY EZEQUIEL HERRERA RODRIGUEZ',oficina:'Porteo',fecha:'2026-01-01'},
+        {folio:'MTY-11.26',nombre:'JOSE ROMAN OLIVARES ALVARADO',oficina:'Monterrey',fecha:'2026-01-01'},
+        {folio:'MTY-10.26',nombre:'FULANITA MARTINEZ',oficina:'Monterrey',fecha:'2026-01-01'},
+        {folio:'MTY-9.26',nombre:'ERICK ALAN ORTIZ VAZQUEZ',oficina:'Monterrey',fecha:'2026-01-01'},
+        {folio:'MTY-8.26',nombre:'CARLOS ARTURO ZAVALA OLIVARES',oficina:'Monterrey',fecha:'2026-01-01'},
+        {folio:'MTY-7.26',nombre:'CARMEN SUSANA CORONADO LUGO',oficina:'Monterrey',fecha:'2026-01-01'},
+        {folio:'MTY-6.26',nombre:'HECTOR HUGO GARCIA VILLA',oficina:'Monterrey',fecha:'2026-01-01'},
+        {folio:'MTY-5.26',nombre:'Daniel Alexis Rodriguez Rodriguez',oficina:'Monterrey',fecha:'2026-01-01'},
+        {folio:'MTY-4.26',nombre:'Pablo Cesar Paz Pachicano',oficina:'Monterrey',fecha:'2026-01-01'},
+        {folio:'MTY-3.26',nombre:'JOSE DAVID CASTILLO DE LEON',oficina:'Monterrey',fecha:'2026-01-01'},
+        {folio:'MTY-2.26',nombre:'ADRIAN OSWALDO MATUS MEDINA',oficina:'Monterrey',fecha:'2026-01-01'},
+        {folio:'MTY-1.26',nombre:'OSCAR MANUEL CASTAN VALDEZ',oficina:'Monterrey',fecha:'2026-01-01'},
+        {folio:'LOV-1.26',nombre:'VICTOR GERARDO AGUILERA RODRIGUEZ',oficina:'Monclova',fecha:'2026-01-01'},
+        {folio:'DEL-1.26',nombre:'LUIS ROBERTO AGUIRRE MUÑOZ',oficina:'Delicias',fecha:'2026-01-01'},
+        {folio:'CUU-1.26',nombre:'ADOLFO MORENO BUENROSTRO',oficina:'Chihuahua',fecha:'2026-01-01'},
+        {folio:'COM-1.26',nombre:'CHRISTIAN EDUARDO MEDINA HERNANDEZ',oficina:'Combustibles',fecha:'2026-01-01'},
+        {folio:'CJS-3.26',nombre:'JUAN LUIS GARCIA CARRASCO',oficina:'CD Juárez',fecha:'2026-01-01'},
+        {folio:'CJS-2.26',nombre:'JUAN PEREZ',oficina:'CD Juárez',fecha:'2026-01-01'},
+        {folio:'CJS-1.26',nombre:'JORGE ANTONIO SANCHEZ',oficina:'CD Juárez',fecha:'2026-01-01'},
+        {folio:'CED-1.26',nombre:'JUAN JOSE ARCEO BUSTOS',oficina:'CEDIS',fecha:'2026-01-01'},
+      ];
+      localStorage.setItem('afimex-folios-manual', JSON.stringify(_foliosHist));
+      // Actualizar consecutivos para que el siguiente folio sea correcto
+      const _fData = JSON.parse(localStorage.getItem('afimex-folios')||'{}');
+      const _consec = {TRC:3,TAM:2,SLW:1,SLP:3,RH:1,POR:2,MTY:11,LOV:1,DEL:1,CUU:1,COM:1,CJS:3,CED:1};
+      Object.entries(_consec).forEach(([iata,n])=>{ if(!_fData[iata]||_fData[iata]<n) _fData[iata]=n; });
+      localStorage.setItem('afimex-folios', JSON.stringify(_fData));
+      foliosData = _fData;
+    }
+  }catch(e){}
   try{renderNav();}catch(e){}
   try{mostrarLoginInicial();}catch(e){render();}
   try{setSyncStatus(tieneGSheets()?'ok':'local');}catch(e){}
