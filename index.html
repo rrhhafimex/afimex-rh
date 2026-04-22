@@ -165,7 +165,7 @@ input.field-ok { border-color: #16a34a; background: #f0fdf4; }
   <div class="topbar no-print">
     <div>
       <div class="topbar-title">Afimex Paquetería — Sistema RH</div>
-      <div class="topbar-sub">V 11.1.1 | Recursos Humanos</div>
+      <div class="topbar-sub">V 11.1.2 | Recursos Humanos</div>
     </div>
     <div style="display:flex;align-items:center;gap:12px">
       <div id="sync-status" class="sync-badge sync-local">💾 Solo local</div>
@@ -358,30 +358,46 @@ function jsonpCall(url, cbName){
 // Enviar via JSONP GET — único método que funciona cross-origin
 function jsonpSend(sheet, data){
   return new Promise((resolve)=>{
-    const cb = 'gs_'+sheet.replace(/[^a-zA-Z0-9]/g,'_')+'_'+Date.now();
-    // Chunks de 2000 chars — después del encodeURIComponent puede triplicarse
-    // Apps Script rechaza URLs mayores a ~8000 chars
     const json = JSON.stringify(data);
-    const chunks = [];
     const SIZE = 2000;
+    const chunks = [];
     for(let i=0;i<json.length;i+=SIZE) chunks.push(json.slice(i,i+SIZE));
-    
-    // Enviar chunk por chunk secuencialmente
+
     let idx = 0;
+    const cbBase = 'gsChunk_'+sheet.replace(/[^a-zA-Z0-9]/g,'_');
+
     function sendNext(){
       if(idx >= chunks.length){ resolve({ok:true}); return; }
-      const cbName = cb+'_'+idx;
-      const t = setTimeout(()=>{ delete window[cbName]; idx++; sendNext(); }, 4000);
-      window[cbName] = ()=>{ clearTimeout(t); delete window[cbName]; idx++; sendNext(); };
+      const cbName = cbBase+'_'+idx;
+      // Limpiar callback anterior si quedó colgado
+      if(window[cbName]) delete window[cbName];
+      const t = setTimeout(()=>{
+        delete window[cbName];
+        idx++;
+        sendNext();
+      }, 8000);
+      window[cbName] = function(){
+        clearTimeout(t);
+        delete window[cbName];
+        idx++;
+        sendNext();
+      };
       const s = document.createElement('script');
-      s.onerror = ()=>{ clearTimeout(t); delete window[cbName]; idx++; sendNext(); };
-      const params = '?action=saveChunk&sheet='+encodeURIComponent(sheet)
-        +'&chunk='+idx+'&total='+chunks.length
+      s.onerror = function(){
+        clearTimeout(t);
+        delete window[cbName];
+        idx++;
+        sendNext();
+      };
+      const params = '?action=saveChunk'
+        +'&sheet='+encodeURIComponent(sheet)
+        +'&chunk='+idx
+        +'&total='+chunks.length
         +'&data='+encodeURIComponent(chunks[idx])
         +'&callback='+cbName;
       s.src = APPS_SCRIPT_URL + params;
       document.head.appendChild(s);
-      setTimeout(()=>{ try{document.head.removeChild(s);}catch(e){} },10000);
+      setTimeout(function(){ try{document.head.removeChild(s);}catch(e){} }, 10000);
     }
     sendNext();
   });
