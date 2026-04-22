@@ -165,7 +165,7 @@ input.field-ok { border-color: #16a34a; background: #f0fdf4; }
   <div class="topbar no-print">
     <div>
       <div class="topbar-title">Afimex Paquetería — Sistema RH</div>
-      <div class="topbar-sub">V 11.1.4 | Recursos Humanos</div>
+      <div class="topbar-sub">V 11.1.5 | Recursos Humanos</div>
     </div>
     <div style="display:flex;align-items:center;gap:12px">
       <div id="sync-status" class="sync-badge sync-local">💾 Solo local</div>
@@ -677,7 +677,7 @@ async function sincronizarDesdeGSheets(){
   }
 }
 
-// ── GUARDAR todos los datos ─────────────────────────────────────
+// ── GUARDAR todos los datos — solo expedientes y folios (rápido) ─
 async function syncAll(){
   // Siempre guardar local
   localStorage.setItem('afimex-db', JSON.stringify(db));
@@ -687,38 +687,23 @@ async function syncAll(){
 
   if(!tieneGSheets()){ setSyncStatus('local'); return; }
 
-  const svFolios      = JSON.parse(localStorage.getItem('afimex-sv-folios')||'[]');
-  const foliosManual  = JSON.parse(localStorage.getItem('afimex-folios-manual')||'[]');
-
-  // Empaquetar catálogos para enviar a GSheets
-  // Comprimir nóminas eliminando campos con valor 0 o vacío
-  const nominasCompact = DATA_NOMINAS.map(r=>{
-    const c={};
-    for(const k in r) if(r[k]!==0&&r[k]!==''&&r[k]!==null&&r[k]!==undefined) c[k]=r[k];
-    return c;
-  });
-  const catalogos = {
-    nominas:     nominasCompact,
-    iata:        IATA_MAP,
-    puestos:     PUESTOS_POR_OFICINA,
-    posiciones:  DATA_POSICIONES,
-    direcciones: OFICINAS_DIR,
-    actividades: ACTIVIDADES,
-    prestaciones:PRESTACIONES_CONFIG,
-    docFiniq:    window.DOC_FINIQ_CONFIG || {},
-    registrosPatronales: DATA_REGISTROS_PATRONALES,
-    salarios: DATA_SALARIOS,
-  };
-
+  // Solo subir expedientes operativos — los catálogos se suben con ⬆ Subir
   try{
     setSyncStatus('saving');
-    const res = await gsCall('saveAll', {
-      db, seguimientos, folios: foliosData, finiquitos: finiquitosDB, svFolios, foliosManual, catalogos
-    });
-    setSyncStatus(res.ok ? 'ok' : 'error');
+    await jsonpSend('Expedientes',  db);
+    await jsonpSend('Seguimiento',  seguimientos);
+    await jsonpSend('Folios',       foliosData);
+    await jsonpSend('Finiquitos',   finiquitosDB);
+    const svFolios     = JSON.parse(localStorage.getItem('afimex-sv-folios')||'[]');
+    const foliosManual = JSON.parse(localStorage.getItem('afimex-folios-manual')||'[]');
+    if(svFolios.length > 0)     await jsonpSend('SV_Folios',     svFolios);
+    if(foliosManual.length > 0) await jsonpSend('Folios_Manual', foliosManual);
+    const usuarios = await getUsuarios();
+    if(usuarios.length > 0)     await jsonpSend('Usuarios',      usuarios);
+    setSyncStatus('ok');
   } catch(e){
     setSyncStatus('error');
-    console.warn('Error al sincronizar con GSheets:', e);
+    console.warn('Error al sincronizar:', e);
   }
 }
 
@@ -5180,11 +5165,7 @@ async function configGuardar(){
   localStorage.setItem('afimex-config-salarios',  JSON.stringify(DATA_SALARIOS));
   localStorage.setItem('afimex-config-rp',        JSON.stringify(DATA_REGISTROS_PATRONALES));
   localStorage.setItem('afimex-config-docfiniq',     JSON.stringify(window.DOC_FINIQ_CONFIG||{}));
-  // Subir también a Google Sheets si está configurado
-  if(tieneGSheets()) showLoading('💾 Guardando catálogos', 'Sincronizando cambios con Google Sheets...');
-  await syncAll();
-  hideLoading();
-  showToast('✓ Configuración guardada' + (tieneGSheets() ? ' y sincronizada con Drive' : ''));
+  showToast('✓ Configuración guardada localmente. Presiona ⬆ Subir para sincronizar con la nube.');
   render();
 }
 
