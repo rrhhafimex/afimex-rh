@@ -411,6 +411,10 @@ async function gsCall(action, data){
     if(data.svFolios && data.svFolios.length > 0){
       promises.push(jsonpSend('SV_Folios', data.svFolios));
     }
+    // Folios manuales — solo enviar si hay registros
+    if(data.foliosManual && data.foliosManual.length > 0){
+      promises.push(jsonpSend('Folios_Manual', data.foliosManual));
+    }
     // Solo enviar usuarios si hay al menos uno — evita borrar la lista en la nube
     if(usuarios && usuarios.length > 0){
       promises.push(jsonpSend('Usuarios', usuarios));
@@ -621,6 +625,10 @@ async function sincronizarDesdeGSheets(){
       if(res.svFolios && res.svFolios.length > 0){
         localStorage.setItem('afimex-sv-folios', JSON.stringify(res.svFolios));
       }
+      // Cargar folios manuales desde la nube
+      if(res.foliosManual && res.foliosManual.length > 0){
+        localStorage.setItem('afimex-folios-manual', JSON.stringify(res.foliosManual));
+      }
       hideLoading();
       setSyncStatus('ok');
       showToast('✓ Datos y catálogos sincronizados correctamente');
@@ -647,7 +655,8 @@ async function syncAll(){
 
   if(!tieneGSheets()){ setSyncStatus('local'); return; }
 
-  const svFolios = JSON.parse(localStorage.getItem('afimex-sv-folios')||'[]');
+  const svFolios      = JSON.parse(localStorage.getItem('afimex-sv-folios')||'[]');
+  const foliosManual  = JSON.parse(localStorage.getItem('afimex-folios-manual')||'[]');
 
   // Empaquetar catálogos para enviar a GSheets
   // Comprimir nóminas eliminando campos con valor 0 o vacío
@@ -672,7 +681,7 @@ async function syncAll(){
   try{
     setSyncStatus('saving');
     const res = await gsCall('saveAll', {
-      db, seguimientos, folios: foliosData, finiquitos: finiquitosDB, svFolios, catalogos
+      db, seguimientos, folios: foliosData, finiquitos: finiquitosDB, svFolios, foliosManual, catalogos
     });
     setSyncStatus(res.ok ? 'ok' : 'error');
   } catch(e){
@@ -760,6 +769,8 @@ async function folioAgregarManual(){
       generadoPor:(currentUser&&(currentUser.nombre||currentUser.usuario))||'Manual',
       fechaRegistro:new Date().toISOString()});
     localStorage.setItem('afimex-folios-manual',JSON.stringify(lista));
+    // Subir inmediatamente a la nube
+    if(tieneGSheets()) jsonpSend('Folios_Manual', lista);
   }catch(e){}
   await syncAll();
   render();
