@@ -359,10 +359,11 @@ function jsonpCall(url, cbName){
 function jsonpSend(sheet, data){
   return new Promise((resolve)=>{
     const cb = 'gs_'+sheet.replace(/[^a-zA-Z0-9]/g,'_')+'_'+Date.now();
-    // Partir en chunks de 4000 chars si es necesario
+    // Chunks de 2000 chars — después del encodeURIComponent puede triplicarse
+    // Apps Script rechaza URLs mayores a ~8000 chars
     const json = JSON.stringify(data);
     const chunks = [];
-    const SIZE = 7000;
+    const SIZE = 2000;
     for(let i=0;i<json.length;i+=SIZE) chunks.push(json.slice(i,i+SIZE));
     
     // Enviar chunk por chunk secuencialmente
