@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Afimex RH V12</title>
+<title>Afimex RH V11</title>
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
 :root {
@@ -185,8 +185,8 @@ input.field-ok { border-color: #16a34a; background: #f0fdf4; }
 const ADMIN_PASS = '1006';
 const GENERALISTA_PASS = 'rh2024';
 const TABS_REC = ['altas','seguimiento','docs']; // Pestañas reclutador
-const TABS_NOM = ['baja','finiquitos']; // Pestañas nóminas
-const TABS_GER = ['altas','baja','seguimiento','base','docs','folios']; // Pestañas gerencia
+const TABS_NOM = ['baja','finiquitos','incapacidades']; // Pestañas nóminas
+const TABS_GER = ['altas','baja','seguimiento','base','docs','folios','incapacidades']; // Pestañas gerencia
 // ─── CATÁLOGO DE SALARIOS ────────────────────────────────────────────────────
 var DATA_SALARIOS = [
   { sd: 316,  sbc: 331.58, descripcion: "Salario Base Zona A" },
@@ -316,8 +316,8 @@ var OFICINAS_DIR = {
 };
 
 const TABS_GEN = ['altas','baja','seguimiento','docs'];
-const TABS_ADM = ['altas','baja','seguimiento','base','docs','finiquitos','usuarios','config'];
-const TAB_LABELS = {altas:'Alta de Expediente',baja:'Solicitud de Baja',seguimiento:'Seguimiento de Ingresos',folios:'Folios de Salida',base:'Base de Datos',docs:'Impresión de Documentos',usuarios:'👥 Usuarios',config:'⚙️ Catálogo',finiquitos:'💰 Finiquitos'};
+const TABS_ADM = ['altas','baja','seguimiento','base','docs','finiquitos','incapacidades','usuarios','config'];
+const TAB_LABELS = {altas:'Alta de Expediente',baja:'Solicitud de Baja',seguimiento:'Seguimiento de Ingresos',folios:'Folios de Salida',base:'Base de Datos',docs:'Impresión de Documentos',usuarios:'👥 Usuarios',config:'⚙️ Catálogo',finiquitos:'💰 Finiquitos',incapacidades:'🏥 Incapacidades'};
 
 // ─── STATE ────────────────────────────────────────────────────────────────────
 let currentTab='altas', currentType='semanal', isAdmin=false;
@@ -612,6 +612,7 @@ async function sincronizarDesdeGSheets(){
         if(c.registrosPatronales&&c.registrosPatronales.length>0){ DATA_REGISTROS_PATRONALES.splice(0,DATA_REGISTROS_PATRONALES.length,...c.registrosPatronales); localStorage.setItem('afimex-config-rp',JSON.stringify(DATA_REGISTROS_PATRONALES)); }
         if(c.docFiniq&&Object.keys(c.docFiniq).length>0){ window.DOC_FINIQ_CONFIG=c.docFiniq; localStorage.setItem('afimex-config-docfiniq',JSON.stringify(c.docFiniq)); }
       }
+      try{ _incCargarDeRes(res); }catch(e){}
       hideLoading();
       setSyncStatus('ok');
       showToast('✓ Datos y catálogos sincronizados correctamente');
@@ -754,7 +755,7 @@ async function folioAgregarManual(){
   render();
   showToast(`✓ Folio generado: ${folio}`);
 }
-function siguienteNomina(){const usados=new Set(db.map(r=>r.numNomina));let n=2923;while(usados.has(n))n++;return n;}
+function siguienteNomina(){const usados=new Set(db.map(r=>r.numNomina));let n=2958;while(usados.has(n))n++;return n;}
 function validarNomina(val){const n=parseInt(val);if(!val||isNaN(n))return{ok:false,msg:'Ingresa un número de nómina válido'};if(db.some(r=>parseInt(r.numNomina)===n))return{ok:false,msg:'# '+n+' ya está registrado'};return{ok:true,msg:'Disponible ✓'};}
 function validarNSS(val){if(!val||String(val).trim()==='')return{ok:null,msg:''};const v=String(val).trim();const e=db.find(r=>r.nss&&String(r.nss).trim()===v);if(e)return{ok:false,msg:'NSS registrado: '+e.nombre};return{ok:true,msg:'NSS disponible ✓'};}
 function buildSelect(name,opts,ph,val=''){return`<select name="${name}"><option value="">— ${ph} —</option>${opts.map(o=>`<option value="${o}"${val===o?' selected':''}>${o}</option>`).join('')}</select>`;}
@@ -2498,7 +2499,7 @@ function render(){
     mostrarLoginInicial();
     return;
   }
-  const map={altas:altasHTML,baja:bajaHTML,seguimiento:seguimientoHTML,folios:foliosHTML,base:baseHTML,docs:docsHTML,config:configHTML,finiquitos:finiquitosHTML,usuarios:()=>'<div id="usuarios-loading" style="padding:20px;color:var(--text2)">Cargando...</div>'};
+  const map={altas:altasHTML,baja:bajaHTML,seguimiento:seguimientoHTML,folios:foliosHTML,base:baseHTML,docs:docsHTML,config:configHTML,finiquitos:finiquitosHTML,incapacidades:incapacidadesHTML,usuarios:()=>'<div id="usuarios-loading" style="padding:20px;color:var(--text2)">Cargando...</div>'};
   const _roleTabsR = currentRole==='admin' ? TABS_ADM :
                      currentRole==='generalista' ? TABS_GEN :
                      currentRole==='reclutador' ? TABS_REC :
@@ -6695,6 +6696,666 @@ function configEditarDir(of){
     OFICINAS_DIR[vals.oficina.trim()] = vals.direccion.trim();
     render();
   });
+}
+
+// ─── INCAPACIDADES ────────────────────────────────────────────────────────────
+var incapacidadesDB = [];
+try{ const _v=localStorage.getItem('afimex-incapacidades'); if(_v) incapacidadesDB=JSON.parse(_v); }catch(e){}
+
+function saveIncapacidades(){
+  localStorage.setItem('afimex-incapacidades', JSON.stringify(incapacidadesDB));
+  if(tieneGSheets()) jsonpSend('Incapacidades', incapacidadesDB);
+}
+
+// Estado del módulo
+var _incCal = {
+  anio: new Date().getFullYear(),
+  mes:  new Date().getMonth(), // 0-11
+  vista: 'mes', // 'mes' | 'semana' | 'dia'
+  diaActual: new Date().getDate(),
+};
+
+const INC_TIPOS = {
+  'enfermedad': { label:'Enfermedad General',  color:'#16a34a', bg:'#dcfce7', border:'#86efac' },
+  'riesgo':     { label:'Riesgo de Trabajo',   color:'#ea580c', bg:'#ffedd5', border:'#fdba74' },
+  'maternidad': { label:'Maternidad',           color:'#db2777', bg:'#fce7f3', border:'#f9a8d4' },
+};
+
+function incapacidadesHTML(){
+  return `<div class="content" style="padding:20px" id="inc-root">
+    ${_incCalHTML()}
+  </div>`;
+}
+
+function _incCalHTML(){
+  const v = _incCal.vista;
+  return `
+  <!-- Leyenda y controles superiores -->
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:10px">
+    <div>
+      <h2 style="font-size:16px;font-weight:700;color:var(--afimex-blue)">🏥 Control de Incapacidades</h2>
+      <div style="display:flex;gap:12px;margin-top:6px;flex-wrap:wrap">
+        ${Object.entries(INC_TIPOS).map(([k,t])=>`
+        <span style="display:flex;align-items:center;gap:5px;font-size:12px;color:var(--text2)">
+          <span style="width:14px;height:14px;border-radius:3px;background:${t.bg};border:2px solid ${t.border};display:inline-block"></span>
+          ${t.label}
+        </span>`).join('')}
+      </div>
+    </div>
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+      <button onclick="incNuevaIncapacidad()" class="btn btn-primary" style="font-size:13px">+ Nueva Incapacidad</button>
+      <button onclick="incListaColaboradores()" class="btn btn-secondary" style="font-size:13px">👥 Colaboradores</button>
+      <button onclick="incDescargarReporte()" class="btn btn-secondary" style="font-size:13px">📄 Reporte</button>
+    </div>
+  </div>
+
+  <!-- Barra de navegación del calendario -->
+  <div style="background:white;border:1px solid var(--border);border-radius:var(--radius);overflow:hidden">
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:12px 16px;border-bottom:1px solid var(--border)">
+      <div style="display:flex;gap:6px;align-items:center">
+        <button onclick="_incIrHoy()" style="padding:5px 14px;border:1px solid var(--border2);border-radius:5px;background:white;cursor:pointer;font-size:13px;font-weight:600">Hoy</button>
+        <button onclick="_incNavegar(-1)" style="padding:5px 10px;border:1px solid var(--border2);border-radius:5px;background:white;cursor:pointer;font-size:14px">&lt;</button>
+        <button onclick="_incNavegar(1)"  style="padding:5px 10px;border:1px solid var(--border2);border-radius:5px;background:white;cursor:pointer;font-size:14px">&gt;</button>
+      </div>
+      <div style="font-size:18px;font-weight:700;color:var(--afimex-blue)">${_incTituloNav()}</div>
+      <div style="display:flex;border:1px solid var(--border2);border-radius:5px;overflow:hidden">
+        ${['mes','semana','dia'].map(vi=>`<button onclick="_incSetVista('${vi}')"
+          style="padding:6px 14px;border:none;font-size:12px;font-weight:600;cursor:pointer;
+                 background:${v===vi?'var(--afimex-blue)':'white'};
+                 color:${v===vi?'white':'var(--text2)'}">${vi==='mes'?'Mes':vi==='semana'?'Semana':'Día'}</button>`).join('')}
+      </div>
+    </div>
+
+    <!-- Cuerpo del calendario -->
+    ${v==='mes' ? _incVistaMes() : v==='semana' ? _incVistaSemana() : _incVistaDia()}
+  </div>`;
+}
+
+function _incTituloNav(){
+  const meses=['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'];
+  const dias=['domingo','lunes','martes','miércoles','jueves','viernes','sábado'];
+  if(_incCal.vista==='mes') return meses[_incCal.mes]+' de '+_incCal.anio;
+  if(_incCal.vista==='dia'){
+    const d=new Date(_incCal.anio,_incCal.mes,_incCal.diaActual);
+    return dias[d.getDay()]+' '+_incCal.diaActual+' de '+meses[_incCal.mes]+' de '+_incCal.anio;
+  }
+  // semana
+  const lun=_incLunesDeSemanaDe(new Date(_incCal.anio,_incCal.mes,_incCal.diaActual));
+  const dom=new Date(lun); dom.setDate(dom.getDate()+6);
+  return meses[lun.getMonth()]+' '+lun.getDate()+' – '+dom.getDate()+' de '+_incCal.anio;
+}
+
+function _incNavegar(dir){
+  if(_incCal.vista==='mes'){
+    _incCal.mes+=dir;
+    if(_incCal.mes>11){_incCal.mes=0;_incCal.anio++;}
+    if(_incCal.mes<0) {_incCal.mes=11;_incCal.anio--;}
+  } else if(_incCal.vista==='semana'){
+    _incCal.diaActual+=dir*7;
+    const d=new Date(_incCal.anio,_incCal.mes,_incCal.diaActual);
+    _incCal.anio=d.getFullYear(); _incCal.mes=d.getMonth(); _incCal.diaActual=d.getDate();
+  } else {
+    _incCal.diaActual+=dir;
+    const d=new Date(_incCal.anio,_incCal.mes,_incCal.diaActual);
+    _incCal.anio=d.getFullYear(); _incCal.mes=d.getMonth(); _incCal.diaActual=d.getDate();
+  }
+  _incRender();
+}
+function _incIrHoy(){
+  const h=new Date();
+  _incCal.anio=h.getFullYear(); _incCal.mes=h.getMonth(); _incCal.diaActual=h.getDate();
+  _incRender();
+}
+function _incSetVista(v){ _incCal.vista=v; _incRender(); }
+function _incRender(){
+  const r=document.getElementById('inc-root');
+  if(r) r.innerHTML=_incCalHTML();
+}
+
+// Obtener incapacidades activas en un rango de fecha
+function _incEnFecha(fechaStr){
+  return incapacidadesDB.filter(i=>{
+    if(!i.activa) return false;
+    return fechaStr >= i.inicio && fechaStr <= i.fin;
+  });
+}
+function _incFechaStr(anio,mes,dia){
+  return anio+'-'+String(mes+1).padStart(2,'0')+'-'+String(dia).padStart(2,'0');
+}
+function _incChip(inc, truncar){
+  const t=INC_TIPOS[inc.tipo]||INC_TIPOS.enfermedad;
+  const nombre = truncar && inc.nombre.length>22 ? inc.nombre.substring(0,20)+'…' : inc.nombre;
+  return `<div onclick="event.stopPropagation();incVerDetalle('${inc.id}')"
+    style="background:${t.bg};border-left:3px solid ${t.border};color:${t.color};
+           padding:2px 6px;border-radius:3px;font-size:11px;font-weight:600;
+           cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+           margin-bottom:2px;max-width:100%"
+    title="${inc.nombre} — ${INC_TIPOS[inc.tipo]?.label||inc.tipo} (${inc.inicio} al ${inc.fin})">
+    ${nombre}
+  </div>`;
+}
+
+// ── Vista Mes ──
+function _incVistaMes(){
+  const primerDia = new Date(_incCal.anio, _incCal.mes, 1).getDay(); // 0=dom
+  const diasEnMes = new Date(_incCal.anio, _incCal.mes+1, 0).getDate();
+  const hoy = new Date(); hoy.setHours(0,0,0,0);
+  // Lunes primero: ajustar offset (lun=0..dom=6)
+  const offset = (primerDia+6)%7;
+  const cabeceras=['lun','mar','mié','jue','vie','sáb','dom'];
+
+  let celdas='';
+  let celda=0;
+  // Celdas vacías antes del día 1
+  for(let i=0;i<offset;i++){ celdas+=`<td style="background:var(--bg2);border:1px solid var(--border);vertical-align:top;min-height:90px;padding:4px"></td>`; celda++; }
+
+  for(let d=1;d<=diasEnMes;d++){
+    const fStr=_incFechaStr(_incCal.anio,_incCal.mes,d);
+    const esHoy=new Date(_incCal.anio,_incCal.mes,d).getTime()===hoy.getTime();
+    const incs=_incEnFecha(fStr);
+    const MAX_VIS=3;
+    const visibles=incs.slice(0,MAX_VIS);
+    const resto=incs.length-MAX_VIS;
+
+    celdas+=`<td style="border:1px solid var(--border);vertical-align:top;min-height:90px;padding:4px;
+                        background:${esHoy?'#fffbeb':'white'};cursor:pointer"
+              onclick="_incCal.diaActual=${d};_incCal.anio=${_incCal.anio};_incCal.mes=${_incCal.mes};_incSetVista('dia')">
+      <div style="font-size:12px;font-weight:${esHoy?700:400};color:${esHoy?'var(--afimex-orange)':'var(--text2)'};
+                  ${esHoy?'background:var(--afimex-orange);color:white;width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;margin-bottom:3px':'margin-bottom:3px'}">${d}</div>
+      ${visibles.map(i=>_incChip(i,true)).join('')}
+      ${resto>0?`<div style="font-size:11px;color:var(--afimex-blue);cursor:pointer;font-weight:600">+${resto} más</div>`:''}
+    </td>`;
+    celda++;
+    if(celda%7===0 && d<diasEnMes) celdas+=`</tr><tr>`;
+  }
+  // Celdas vacías al final
+  const restoCeldas=(7-(celda%7))%7;
+  for(let i=0;i<restoCeldas;i++) celdas+=`<td style="background:var(--bg2);border:1px solid var(--border);vertical-align:top;min-height:90px;padding:4px"></td>`;
+
+  return `<div style="overflow-x:auto">
+  <table style="width:100%;border-collapse:collapse;table-layout:fixed">
+    <thead><tr>${cabeceras.map(c=>`<th style="padding:8px;text-align:center;font-size:13px;font-weight:600;color:var(--text2);border:1px solid var(--border);background:var(--bg2)">${c}</th>`).join('')}</tr></thead>
+    <tbody><tr>${celdas}</tr></tbody>
+  </table></div>`;
+}
+
+// ── Vista Semana ──
+function _incLunesDeSemanaDe(fecha){
+  const d=new Date(fecha);
+  const dow=d.getDay(); // 0=dom
+  const diff=(dow+6)%7; // días desde lunes
+  d.setDate(d.getDate()-diff);
+  return d;
+}
+function _incVistaSemana(){
+  const lun=_incLunesDeSemanaDe(new Date(_incCal.anio,_incCal.mes,_incCal.diaActual));
+  const dias=[];
+  for(let i=0;i<7;i++){ const d=new Date(lun); d.setDate(d.getDate()+i); dias.push(d); }
+  const hoy=new Date(); hoy.setHours(0,0,0,0);
+  const cabDias=['Lun','Mar','Mié','Jue','Vie','Sáb','Dom'];
+
+  const cols=dias.map((d,i)=>{
+    const fStr=_incFechaStr(d.getFullYear(),d.getMonth(),d.getDate());
+    const esHoy=d.getTime()===hoy.getTime();
+    const incs=_incEnFecha(fStr);
+    return `<td style="border:1px solid var(--border);vertical-align:top;padding:6px;min-height:120px;
+                        background:${esHoy?'#fffbeb':'white'};width:${100/7}%"
+              onclick="_incCal.anio=${d.getFullYear()};_incCal.mes=${d.getMonth()};_incCal.diaActual=${d.getDate()};_incSetVista('dia')">
+      <div style="font-size:12px;font-weight:600;color:${esHoy?'var(--afimex-orange)':'var(--text2)'};margin-bottom:6px;text-align:center">
+        ${cabDias[i]}<br>
+        <span style="font-size:18px;font-weight:700;color:${esHoy?'var(--afimex-orange)':'var(--text)'}">${d.getDate()}</span>
+      </div>
+      ${incs.map(i=>_incChip(i,true)).join('')}
+      ${incs.length===0?'<div style="font-size:11px;color:var(--border2);text-align:center;margin-top:20px">—</div>':''}
+    </td>`;
+  }).join('');
+
+  return `<div style="overflow-x:auto">
+  <table style="width:100%;border-collapse:collapse;table-layout:fixed">
+    <tbody><tr>${cols}</tr></tbody>
+  </table></div>`;
+}
+
+// ── Vista Día ──
+function _incVistaDia(){
+  const fStr=_incFechaStr(_incCal.anio,_incCal.mes,_incCal.diaActual);
+  const incs=_incEnFecha(fStr);
+  const meses=['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'];
+
+  return `<div style="padding:20px">
+    <div style="font-size:14px;color:var(--text2);margin-bottom:14px">
+      ${incs.length} incapacidad${incs.length!==1?'es':''} activa${incs.length!==1?'s':''} el ${_incCal.diaActual} de ${meses[_incCal.mes]} de ${_incCal.anio}
+    </div>
+    ${incs.length===0
+      ? `<div style="text-align:center;padding:40px;color:var(--text2);font-size:13px">Sin incapacidades activas este día</div>`
+      : incs.map(inc=>{
+          const t=INC_TIPOS[inc.tipo]||INC_TIPOS.enfermedad;
+          return `<div style="background:${t.bg};border:1px solid ${t.border};border-left:5px solid ${t.color};
+                              border-radius:var(--radius-sm);padding:12px 16px;margin-bottom:10px;
+                              display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+            <div>
+              <div style="font-size:14px;font-weight:700;color:${t.color}">${inc.nombre}</div>
+              <div style="font-size:12px;color:var(--text2);margin-top:2px">
+                ${t.label} · <strong>${{'inicial':'Inicial','subsecuente':'Subsecuente','st2':'ST-2'}[inc.secuencia]||'—'}</strong>
+                ${inc.nss?` · NSS: ${inc.nss}`:''}
+                · Folio: ${inc.folio||'—'} · ${inc.inicio} al ${inc.fin} (${inc.dias} días)
+              </div>
+              ${inc.nota?`<div style="font-size:11px;color:var(--text2);margin-top:3px">📝 ${inc.nota}</div>`:''}
+            </div>
+            <div style="display:flex;gap:6px">
+              <button onclick="incEditarIncapacidad('${inc.id}')" class="btn btn-sm btn-secondary" style="font-size:11px">✏️ Editar</button>
+              <button onclick="incEliminar('${inc.id}')" class="btn btn-sm" style="font-size:11px;background:#fee2e2;color:#dc2626;border:1px solid #fca5a5">✕</button>
+            </div>
+          </div>`;
+        }).join('')
+    }
+    <div style="margin-top:14px">
+      <button onclick="incNuevaIncapacidad('${fStr}')" class="btn btn-primary btn-sm">+ Agregar incapacidad en este día</button>
+    </div>
+  </div>`;
+}
+
+// ── Modal nueva/editar incapacidad ──
+function incNuevaIncapacidad(fechaDefault){
+  const hoy=fechaDefault||(new Date().toISOString().split('T')[0]);
+  _incModalAbrir({id:null,nombre:'',nss:'',tipo:'enfermedad',secuencia:'inicial',inicio:hoy,fin:hoy,folio:'',nota:''});
+}
+function incEditarIncapacidad(id){
+  const inc=incapacidadesDB.find(i=>i.id===id);
+  if(!inc) return;
+  _incModalAbrir({...inc});
+}
+function incVerDetalle(id){
+  const inc=incapacidadesDB.find(i=>i.id===id);
+  if(!inc) return;
+  const t=INC_TIPOS[inc.tipo]||INC_TIPOS.enfermedad;
+  const secLabel={'inicial':'Inicial','subsecuente':'Subsecuente','st2':'ST-2'}[inc.secuencia]||inc.secuencia||'—';
+  const overlay=document.createElement('div');
+  overlay.className='modal-overlay';
+  overlay.id='inc-detalle-overlay';
+  overlay.innerHTML=`
+  <div class="modal-box" style="max-width:420px;width:95vw">
+    <div style="background:${t.bg};border-left:5px solid ${t.color};border-radius:var(--radius-sm);padding:14px 16px;margin-bottom:14px">
+      <div style="font-size:15px;font-weight:700;color:${t.color}">${inc.nombre}</div>
+      <div style="font-size:12px;color:var(--text2);margin-top:4px">${t.label} — ${secLabel}</div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:13px;margin-bottom:14px">
+      <div><span style="font-size:11px;color:var(--text2);display:block">NSS</span><strong>${inc.nss||'—'}</strong></div>
+      <div><span style="font-size:11px;color:var(--text2);display:block">Folio IMSS</span><strong>${inc.folio||'—'}</strong></div>
+      <div><span style="font-size:11px;color:var(--text2);display:block">Fecha inicio</span><strong>${inc.inicio}</strong></div>
+      <div><span style="font-size:11px;color:var(--text2);display:block">Fecha fin</span><strong>${inc.fin}</strong></div>
+      <div><span style="font-size:11px;color:var(--text2);display:block">Duración</span><strong>${inc.dias} días</strong></div>
+      <div><span style="font-size:11px;color:var(--text2);display:block">Registrada</span><strong>${inc.creado||'—'}</strong></div>
+      ${inc.nota?`<div style="grid-column:1/-1"><span style="font-size:11px;color:var(--text2);display:block">Nota</span><strong>${inc.nota}</strong></div>`:''}
+    </div>
+    <div class="btn-row">
+      <button class="btn btn-danger btn-sm" onclick="incEliminarDesdeDetalle('${inc.id}')">🗑 Eliminar</button>
+      <div style="flex:1"></div>
+      <button class="btn btn-secondary" onclick="document.getElementById('inc-detalle-overlay').remove()">Cerrar</button>
+      <button class="btn btn-primary" onclick="document.getElementById('inc-detalle-overlay').remove();incEditarIncapacidad('${inc.id}')">✏️ Editar</button>
+    </div>
+  </div>`;
+  document.body.appendChild(overlay);
+}
+
+function incEliminarDesdeDetalle(id){
+  if(!confirm('¿Eliminar esta incapacidad? Esta acción no se puede deshacer.')) return;
+  document.getElementById('inc-detalle-overlay')?.remove();
+  incapacidadesDB=incapacidadesDB.filter(i=>i.id!==id);
+  saveIncapacidades();
+  _incRender();
+  showToast('Incapacidad eliminada');
+}
+
+function _incModalAbrir(data){
+  const esNuevo=!data.id;
+  const overlay=document.createElement('div');
+  overlay.className='modal-overlay';
+  overlay.id='inc-modal-overlay';
+  const secOpts=[
+    {v:'inicial',    l:'Inicial'},
+    {v:'subsecuente',l:'Subsecuente'},
+    {v:'st2',        l:'ST-2'},
+  ];
+  overlay.innerHTML=`
+  <div class="modal-box" style="max-width:520px;width:95vw;max-height:90vh;overflow-y:auto">
+    <div class="modal-title">${esNuevo?'➕ Nueva Incapacidad':'✏️ Editar Incapacidad'}</div>
+    <div style="display:flex;flex-direction:column;gap:12px;padding-bottom:4px">
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+        <div class="form-group" style="grid-column:1/-1">
+          <label>Nombre del Colaborador</label>
+          <input id="inc-nombre" list="inc-colaboradores-list" value="${data.nombre||''}" placeholder="Buscar o escribir nombre..."
+            style="width:100%;padding:8px 10px;border:1.5px solid var(--border);border-radius:var(--radius-sm);font-size:13px;font-family:inherit">
+          <datalist id="inc-colaboradores-list">
+            ${[...new Set(incapacidadesDB.map(i=>i.nombre))].sort().map(n=>`<option value="${n.replace(/"/g,'&quot;')}"></option>`).join('')}
+          </datalist>
+        </div>
+        <div class="form-group">
+          <label>NSS</label>
+          <input id="inc-nss" value="${data.nss||''}" placeholder="Ej: 12345678901"
+            style="width:100%;padding:8px 10px;border:1.5px solid var(--border);border-radius:var(--radius-sm);font-size:13px;font-family:inherit">
+        </div>
+        <div class="form-group">
+          <label>Folio IMSS</label>
+          <input id="inc-folio" value="${data.folio||''}" placeholder="Ej: 12345678"
+            style="width:100%;padding:8px 10px;border:1.5px solid var(--border);border-radius:var(--radius-sm);font-size:13px;font-family:inherit">
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label>Tipo de Incapacidad</label>
+        <div style="display:flex;gap:8px">
+          ${Object.entries(INC_TIPOS).map(([k,t])=>`
+          <label style="flex:1;cursor:pointer">
+            <input type="radio" name="inc-tipo" value="${k}" ${(data.tipo||'enfermedad')===k?'checked':''} style="display:none" id="inc-tipo-${k}">
+            <div id="inc-tipo-box-${k}" onclick="incSelTipo('${k}')"
+              style="text-align:center;padding:8px 4px;border-radius:5px;border:2px solid ${(data.tipo||'enfermedad')===k?t.border:'var(--border)'};
+                     background:${(data.tipo||'enfermedad')===k?t.bg:'white'};font-size:11px;font-weight:700;
+                     color:${(data.tipo||'enfermedad')===k?t.color:'var(--text2)'};cursor:pointer;transition:all .15s">
+              ${t.label}
+            </div>
+          </label>`).join('')}
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label>Secuencia</label>
+        <div style="display:flex;gap:8px">
+          ${secOpts.map(s=>`
+          <label style="flex:1;cursor:pointer">
+            <input type="radio" name="inc-sec" value="${s.v}" ${(data.secuencia||'inicial')===s.v?'checked':''} style="display:none" id="inc-sec-${s.v}">
+            <div id="inc-sec-box-${s.v}" onclick="incSelSec('${s.v}')"
+              style="text-align:center;padding:8px 4px;border-radius:5px;border:2px solid ${(data.secuencia||'inicial')===s.v?'var(--afimex-blue)':'var(--border)'};
+                     background:${(data.secuencia||'inicial')===s.v?'var(--afimex-blue-light,#e8f0fe)':'white'};
+                     font-size:12px;font-weight:700;color:${(data.secuencia||'inicial')===s.v?'var(--afimex-blue)':'var(--text2)'};cursor:pointer;transition:all .15s">
+              ${s.l}
+            </div>
+          </label>`).join('')}
+        </div>
+      </div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+        <div class="form-group">
+          <label>Fecha de Inicio</label>
+          <input type="date" id="inc-inicio" value="${data.inicio||''}" oninput="incActDias()"
+            style="width:100%;padding:8px 10px;border:1.5px solid var(--border);border-radius:var(--radius-sm);font-size:13px;font-family:inherit">
+        </div>
+        <div class="form-group">
+          <label>Fecha de Fin</label>
+          <input type="date" id="inc-fin" value="${data.fin||''}" oninput="incActDias()"
+            style="width:100%;padding:8px 10px;border:1.5px solid var(--border);border-radius:var(--radius-sm);font-size:13px;font-family:inherit">
+        </div>
+      </div>
+
+      <div style="background:var(--bg2);border-radius:5px;padding:8px 12px;font-size:13px;color:var(--text2)">
+        📅 Duración: <strong id="inc-dias-label">${data.dias||0} días</strong>
+      </div>
+
+      <div class="form-group">
+        <label>Nota (opcional)</label>
+        <input id="inc-nota" value="${data.nota||''}" placeholder="Observaciones..."
+          style="width:100%;padding:8px 10px;border:1.5px solid var(--border);border-radius:var(--radius-sm);font-size:13px;font-family:inherit">
+      </div>
+
+    </div>
+    <div id="inc-error" style="color:#dc2626;font-size:12px;margin-bottom:6px;display:none"></div>
+    <div class="btn-row">
+      <button class="btn btn-secondary" onclick="document.getElementById('inc-modal-overlay').remove()">Cancelar</button>
+      <button class="btn btn-primary" onclick="incGuardar('${data.id||''}')">💾 Guardar</button>
+    </div>
+  </div>`;
+  document.body.appendChild(overlay);
+  incActDias();
+}
+
+var _incTipoSel='enfermedad';
+var _incSecSel='inicial';
+
+function incSelTipo(k){
+  _incTipoSel=k;
+  Object.keys(INC_TIPOS).forEach(t=>{
+    const box=document.getElementById('inc-tipo-box-'+t);
+    if(!box) return;
+    const ti=INC_TIPOS[t];
+    const active=t===k;
+    box.style.borderColor=active?ti.border:'var(--border)';
+    box.style.background=active?ti.bg:'white';
+    box.style.color=active?ti.color:'var(--text2)';
+  });
+  const radio=document.getElementById('inc-tipo-'+k);
+  if(radio) radio.checked=true;
+}
+
+function incSelSec(s){
+  _incSecSel=s;
+  ['inicial','subsecuente','st2'].forEach(v=>{
+    const box=document.getElementById('inc-sec-box-'+v);
+    if(!box) return;
+    const active=v===s;
+    box.style.borderColor=active?'var(--afimex-blue)':'var(--border)';
+    box.style.background=active?'var(--afimex-blue-light,#e8f0fe)':'white';
+    box.style.color=active?'var(--afimex-blue)':'var(--text2)';
+  });
+  const radio=document.getElementById('inc-sec-'+s);
+  if(radio) radio.checked=true;
+}
+
+function incActDias(){
+  const ini=document.getElementById('inc-inicio')?.value;
+  const fin=document.getElementById('inc-fin')?.value;
+  const lbl=document.getElementById('inc-dias-label');
+  if(!ini||!fin||!lbl) return;
+  const d=Math.max(0,Math.round((new Date(fin)-new Date(ini))/(1000*60*60*24))+1);
+  lbl.textContent=d+' día'+(d!==1?'s':'');
+}
+
+function incGuardar(idExistente){
+  const nombre=(document.getElementById('inc-nombre')?.value||'').trim();
+  const nss=(document.getElementById('inc-nss')?.value||'').trim();
+  const tipo=(document.querySelector('input[name="inc-tipo"]:checked')?.value)||_incTipoSel||'enfermedad';
+  const secuencia=(document.querySelector('input[name="inc-sec"]:checked')?.value)||_incSecSel||'inicial';
+  const inicio=document.getElementById('inc-inicio')?.value||'';
+  const fin=document.getElementById('inc-fin')?.value||'';
+  const folio=(document.getElementById('inc-folio')?.value||'').trim();
+  const nota=(document.getElementById('inc-nota')?.value||'').trim();
+  const errEl=document.getElementById('inc-error');
+
+  if(!nombre){ errEl.textContent='Ingresa el nombre del colaborador'; errEl.style.display='block'; return; }
+  if(!inicio||!fin){ errEl.textContent='Ingresa las fechas de inicio y fin'; errEl.style.display='block'; return; }
+  if(fin<inicio){ errEl.textContent='La fecha de fin no puede ser anterior al inicio'; errEl.style.display='block'; return; }
+
+  const dias=Math.round((new Date(fin)-new Date(inicio))/(1000*60*60*24))+1;
+
+  if(idExistente){
+    const idx=incapacidadesDB.findIndex(i=>i.id===idExistente);
+    if(idx>-1) incapacidadesDB[idx]={...incapacidadesDB[idx],nombre,nss,tipo,secuencia,inicio,fin,dias,folio,nota,activa:true};
+  } else {
+    incapacidadesDB.push({
+      id:'inc_'+Date.now(),
+      nombre,nss,tipo,secuencia,inicio,fin,dias,folio,nota,activa:true,
+      creado:new Date().toLocaleDateString('es-MX')
+    });
+  }
+
+  saveIncapacidades();
+  document.getElementById('inc-modal-overlay')?.remove();
+  _incRender();
+  showToast('✓ Incapacidad guardada');
+}
+
+function incEliminar(id){
+  if(!confirm('¿Eliminar esta incapacidad?')) return;
+  incapacidadesDB=incapacidadesDB.filter(i=>i.id!==id);
+  saveIncapacidades();
+  _incRender();
+  showToast('Incapacidad eliminada');
+}
+
+// ── Reporte de incapacidades — Modal de filtros ──
+function incDescargarReporte(){
+  const nombres=[...new Set(incapacidadesDB.map(i=>i.nombre))].sort();
+  const hoy=new Date().toISOString().split('T')[0];
+  const primerDiaMes=hoy.substring(0,7)+'-01';
+  const overlay=document.createElement('div');
+  overlay.className='modal-overlay';
+  overlay.id='inc-reporte-overlay';
+  overlay.innerHTML=`
+  <div class="modal-box" style="max-width:440px;width:95vw">
+    <div class="modal-title">📄 Generar Reporte de Incapacidades</div>
+    <div style="display:flex;flex-direction:column;gap:14px">
+
+      <div class="form-group">
+        <label>Filtro por colaborador <span style="color:var(--text2);font-weight:400">(opcional — dejar vacío para todos)</span></label>
+        <input id="rep-colaborador" list="rep-colab-list" placeholder="Todos los colaboradores"
+          style="width:100%;padding:8px 10px;border:1.5px solid var(--border);border-radius:var(--radius-sm);font-size:13px;font-family:inherit">
+        <datalist id="rep-colab-list">
+          ${nombres.map(n=>`<option value="${n.replace(/"/g,'&quot;')}"></option>`).join('')}
+        </datalist>
+      </div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+        <div class="form-group">
+          <label>Fecha de inicio</label>
+          <input type="date" id="rep-desde" value="${primerDiaMes}"
+            style="width:100%;padding:8px 10px;border:1.5px solid var(--border);border-radius:var(--radius-sm);font-size:13px;font-family:inherit">
+        </div>
+        <div class="form-group">
+          <label>Fecha de fin</label>
+          <input type="date" id="rep-hasta" value="${hoy}"
+            style="width:100%;padding:8px 10px;border:1.5px solid var(--border);border-radius:var(--radius-sm);font-size:13px;font-family:inherit">
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label>Tipo de incapacidad <span style="color:var(--text2);font-weight:400">(opcional)</span></label>
+        <select id="rep-tipo" style="width:100%;padding:8px 10px;border:1.5px solid var(--border);border-radius:var(--radius-sm);font-size:13px;font-family:inherit">
+          <option value="">Todos los tipos</option>
+          <option value="enfermedad">Enfermedad General</option>
+          <option value="riesgo">Riesgo de Trabajo</option>
+          <option value="maternidad">Maternidad</option>
+        </select>
+      </div>
+
+    </div>
+    <div class="btn-row" style="margin-top:16px">
+      <button class="btn btn-secondary" onclick="document.getElementById('inc-reporte-overlay').remove()">Cancelar</button>
+      <button class="btn btn-primary" onclick="incGenerarReporte()">🖨 Generar Reporte</button>
+    </div>
+  </div>`;
+  document.body.appendChild(overlay);
+}
+
+function incGenerarReporte(){
+  const colaborador=(document.getElementById('rep-colaborador')?.value||'').trim().toLowerCase();
+  const desde=document.getElementById('rep-desde')?.value||'';
+  const hasta=document.getElementById('rep-hasta')?.value||'';
+  const tipo=document.getElementById('rep-tipo')?.value||'';
+
+  let datos=incapacidadesDB.slice();
+  if(colaborador) datos=datos.filter(i=>i.nombre.toLowerCase().includes(colaborador));
+  if(desde) datos=datos.filter(i=>i.fin>=desde);
+  if(hasta) datos=datos.filter(i=>i.inicio<=hasta);
+  if(tipo) datos=datos.filter(i=>i.tipo===tipo);
+  datos.sort((a,b)=>a.inicio<b.inicio?1:-1);
+
+  document.getElementById('inc-reporte-overlay')?.remove();
+
+  const secLabel=s=>({'inicial':'Inicial','subsecuente':'Subsecuente','st2':'ST-2'}[s]||s||'—');
+  const subtitulo=[
+    colaborador?`Colaborador: ${colaborador}`:'Todos los colaboradores',
+    desde&&hasta?`Periodo: ${desde} al ${hasta}`:desde?`Desde: ${desde}`:hasta?`Hasta: ${hasta}`:'Sin filtro de fecha',
+    tipo?INC_TIPOS[tipo]?.label:'Todos los tipos',
+  ].join(' · ');
+
+  const filas=datos.map(inc=>{
+    const t=INC_TIPOS[inc.tipo]||INC_TIPOS.enfermedad;
+    return `<tr>
+      <td>${inc.nombre}</td>
+      <td>${inc.nss||'—'}</td>
+      <td><span style="color:${t.color};font-weight:600">${t.label}</span></td>
+      <td>${secLabel(inc.secuencia)}</td>
+      <td>${inc.inicio}</td>
+      <td>${inc.fin}</td>
+      <td style="text-align:center;font-weight:600">${inc.dias}</td>
+      <td>${inc.folio||'—'}</td>
+      <td>${inc.nota||'—'}</td>
+    </tr>`;
+  }).join('');
+
+  const w=window.open('','_blank');
+  w.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8">
+  <title>Reporte de Incapacidades — Afimex RH</title>
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0;}
+    body{font-family:Arial,sans-serif;font-size:11px;padding:20px;color:#1a1a2e}
+    h1{font-size:15px;color:#1A5FA8;margin-bottom:4px}
+    .sub{font-size:11px;color:#6b7280;margin-bottom:4px}
+    .filtros{font-size:11px;color:#1A5FA8;font-weight:600;margin-bottom:14px;background:#e8f0fb;padding:6px 10px;border-radius:5px;display:inline-block}
+    table{width:100%;border-collapse:collapse;font-size:10px}
+    th{background:#1A5FA8;color:white;padding:6px 8px;text-align:left;font-weight:600}
+    td{padding:5px 8px;border-bottom:1px solid #e5e7eb;vertical-align:top}
+    tr:nth-child(even) td{background:#f9fafb}
+    .legend{display:flex;gap:16px;margin-bottom:10px;flex-wrap:wrap}
+    .legend-item{display:flex;align-items:center;gap:5px;font-size:10px}
+    .dot{width:12px;height:12px;border-radius:3px;display:inline-block}
+    @media print{body{padding:10px}}
+  </style>
+  </head><body>
+  <h1>🏥 Reporte de Incapacidades — Afimex Paquetería</h1>
+  <div class="sub">Generado el ${new Date().toLocaleDateString('es-MX',{weekday:'long',year:'numeric',month:'long',day:'numeric'})} · ${datos.length} registro${datos.length!==1?'s':''}</div>
+  <div class="filtros">📋 ${subtitulo}</div>
+  <div class="legend">
+    ${Object.entries(INC_TIPOS).map(([k,t])=>`<div class="legend-item"><span class="dot" style="background:${t.bg};border:2px solid ${t.border}"></span>${t.label}</div>`).join('')}
+  </div>
+  <table>
+    <thead><tr>
+      <th>Colaborador</th><th>NSS</th><th>Tipo</th><th>Secuencia</th>
+      <th>Inicio</th><th>Fin</th><th>Días</th><th>Folio</th><th>Nota</th>
+    </tr></thead>
+    <tbody>${filas||'<tr><td colspan="9" style="text-align:center;padding:20px;color:#6b7280">Sin registros con los filtros seleccionados</td></tr>'}</tbody>
+  </table>
+  <script>window.onload=function(){window.print();}<\/script>
+  </body></html>`);
+  w.document.close();
+}
+
+// ── Lista de colaboradores con incapacidades activas ──
+function incListaColaboradores(){
+  const hoy=new Date().toISOString().split('T')[0];
+  const activas=incapacidadesDB.filter(i=>i.activa && i.fin>=hoy);
+  const overlay=document.createElement('div');
+  overlay.className='modal-overlay';
+  overlay.innerHTML=`
+  <div class="modal-box" style="max-width:560px;width:95vw">
+    <div class="modal-title">👥 Incapacidades Activas (${activas.length})</div>
+    <div style="max-height:400px;overflow-y:auto">
+      ${activas.length===0
+        ? '<div style="text-align:center;padding:30px;color:var(--text2)">Sin incapacidades activas</div>'
+        : activas.map(inc=>{
+            const t=INC_TIPOS[inc.tipo]||INC_TIPOS.enfermedad;
+            return `<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--border);gap:8px;flex-wrap:wrap">
+              <div>
+                <div style="font-size:13px;font-weight:700">${inc.nombre}</div>
+                <div style="font-size:11px;color:var(--text2)">${t.label} · ${inc.inicio} al ${inc.fin} · ${inc.dias} días</div>
+              </div>
+              <span style="background:${t.bg};color:${t.color};border:1px solid ${t.border};padding:2px 8px;border-radius:99px;font-size:11px;font-weight:700;white-space:nowrap">${t.label}</span>
+            </div>`;
+          }).join('')}
+    </div>
+    <div class="btn-row" style="margin-top:12px">
+      <button class="btn btn-secondary" onclick="this.closest('.modal-overlay').remove()">Cerrar</button>
+    </div>
+  </div>`;
+  document.body.appendChild(overlay);
+}
+
+// Cargar incapacidades desde nube al sincronizar
+function _incCargarDeRes(res){
+  if(res && res.incapacidades && res.incapacidades.length>0){
+    incapacidadesDB=res.incapacidades;
+    localStorage.setItem('afimex-incapacidades',JSON.stringify(incapacidadesDB));
+  }
 }
 
 // ─── INIT ─────────────────────────────────────────────────────
