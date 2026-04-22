@@ -165,7 +165,7 @@ input.field-ok { border-color: #16a34a; background: #f0fdf4; }
   <div class="topbar no-print">
     <div>
       <div class="topbar-title">Afimex Paquetería — Sistema RH</div>
-      <div class="topbar-sub">V 11.1.2 | Recursos Humanos</div>
+      <div class="topbar-sub">V 11.1.3 | Recursos Humanos</div>
     </div>
     <div style="display:flex;align-items:center;gap:12px">
       <div id="sync-status" class="sync-badge sync-local">💾 Solo local</div>
@@ -363,19 +363,20 @@ function jsonpSend(sheet, data){
     const chunks = [];
     for(let i=0;i<json.length;i+=SIZE) chunks.push(json.slice(i,i+SIZE));
 
+    // Usar timestamp único por cada llamada para evitar colisiones
+    const uid = Date.now()+'_'+Math.random().toString(36).slice(2,6);
+    const cbBase = 'gsC_'+sheet.replace(/[^a-zA-Z0-9]/g,'_')+'_'+uid;
     let idx = 0;
-    const cbBase = 'gsChunk_'+sheet.replace(/[^a-zA-Z0-9]/g,'_');
 
     function sendNext(){
       if(idx >= chunks.length){ resolve({ok:true}); return; }
       const cbName = cbBase+'_'+idx;
-      // Limpiar callback anterior si quedó colgado
-      if(window[cbName]) delete window[cbName];
-      const t = setTimeout(()=>{
+      const t = setTimeout(function(){
         delete window[cbName];
         idx++;
         sendNext();
-      }, 8000);
+      }, 10000);
+      // Registrar callback ANTES de crear el script
       window[cbName] = function(){
         clearTimeout(t);
         delete window[cbName];
@@ -389,15 +390,15 @@ function jsonpSend(sheet, data){
         idx++;
         sendNext();
       };
-      const params = '?action=saveChunk'
-        +'&sheet='+encodeURIComponent(sheet)
-        +'&chunk='+idx
-        +'&total='+chunks.length
-        +'&data='+encodeURIComponent(chunks[idx])
-        +'&callback='+cbName;
-      s.src = APPS_SCRIPT_URL + params;
+      s.src = APPS_SCRIPT_URL
+        + '?action=saveChunk'
+        + '&sheet=' + encodeURIComponent(sheet)
+        + '&chunk=' + idx
+        + '&total=' + chunks.length
+        + '&data='  + encodeURIComponent(chunks[idx])
+        + '&callback=' + cbName;
       document.head.appendChild(s);
-      setTimeout(function(){ try{document.head.removeChild(s);}catch(e){} }, 10000);
+      setTimeout(function(){ try{document.head.removeChild(s);}catch(e){} }, 12000);
     }
     sendNext();
   });
@@ -406,37 +407,26 @@ function jsonpSend(sheet, data){
 async function gsCall(action, data){
   if(action === 'saveAll'){
     const c = data.catalogos || {};
-    // Obtener usuarios locales — NUNCA enviar lista vacía a la nube para no borrar usuarios
     const usuarios = await getUsuarios();
-    const promises = [
-      jsonpSend('Expedientes',      data.db),
-      jsonpSend('Seguimiento',      data.seguimientos),
-      jsonpSend('Folios',           data.folios),
-      jsonpSend('Finiquitos',       data.finiquitos),
-      jsonpSend('Cat_Nominas',      c.nominas),
-      jsonpSend('Cat_IATA',         c.iata),
-      jsonpSend('Cat_Puestos',      c.puestos),
-      jsonpSend('Cat_Posiciones',   c.posiciones),
-      jsonpSend('Cat_Direcciones',  c.direcciones),
-      jsonpSend('Cat_Actividades',  c.actividades),
-      jsonpSend('Cat_Prestaciones', c.prestaciones),
-      jsonpSend('Cat_DocFiniq',     c.docFiniq),
-      jsonpSend('Cat_RegPatronal',  c.registrosPatronales),
-      jsonpSend('Cat_Salarios',     c.salarios),
-    ];
-    // SV Folios — solo enviar si hay registros para no borrar la hoja
-    if(data.svFolios && data.svFolios.length > 0){
-      promises.push(jsonpSend('SV_Folios', data.svFolios));
-    }
-    // Folios manuales — solo enviar si hay registros
-    if(data.foliosManual && data.foliosManual.length > 0){
-      promises.push(jsonpSend('Folios_Manual', data.foliosManual));
-    }
-    // Solo enviar usuarios si hay al menos uno — evita borrar la lista en la nube
-    if(usuarios && usuarios.length > 0){
-      promises.push(jsonpSend('Usuarios', usuarios));
-    }
-    await Promise.all(promises);
+
+    // Enviar secuencialmente para evitar colisiones de callbacks JSONP
+    await jsonpSend('Expedientes',      data.db);
+    await jsonpSend('Seguimiento',      data.seguimientos);
+    await jsonpSend('Folios',           data.folios);
+    await jsonpSend('Finiquitos',       data.finiquitos);
+    await jsonpSend('Cat_Nominas',      c.nominas);
+    await jsonpSend('Cat_IATA',         c.iata);
+    await jsonpSend('Cat_Puestos',      c.puestos);
+    await jsonpSend('Cat_Posiciones',   c.posiciones);
+    await jsonpSend('Cat_Direcciones',  c.direcciones);
+    await jsonpSend('Cat_Actividades',  c.actividades);
+    await jsonpSend('Cat_Prestaciones', c.prestaciones);
+    await jsonpSend('Cat_DocFiniq',     c.docFiniq);
+    await jsonpSend('Cat_RegPatronal',  c.registrosPatronales);
+    await jsonpSend('Cat_Salarios',     c.salarios);
+    if(data.svFolios    && data.svFolios.length > 0)    await jsonpSend('SV_Folios',     data.svFolios);
+    if(data.foliosManual&& data.foliosManual.length > 0) await jsonpSend('Folios_Manual', data.foliosManual);
+    if(usuarios         && usuarios.length > 0)          await jsonpSend('Usuarios',      usuarios);
     return {ok:true};
   } else {
     // LEER siempre via JSONP — funciona en todas las computadoras sin problemas de CORS
