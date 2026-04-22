@@ -609,16 +609,16 @@ async function sincronizarDesdeGSheets(){
       }
       if(res.catalogos){
         const c = res.catalogos;
-        if(c.nominas    && c.nominas.length>0)             { DATA_NOMINAS.splice(0,DATA_NOMINAS.length,...c.nominas); localStorage.setItem('afimex-config-nominas',JSON.stringify(DATA_NOMINAS)); }
-        if(c.iata       && Object.keys(c.iata).length>0)   { Object.keys(IATA_MAP).forEach(k=>delete IATA_MAP[k]); Object.assign(IATA_MAP,c.iata); localStorage.setItem('afimex-config-iata',JSON.stringify(IATA_MAP)); }
-        if(c.puestos    && Object.keys(c.puestos).length>0){ Object.keys(PUESTOS_POR_OFICINA).forEach(k=>delete PUESTOS_POR_OFICINA[k]); Object.assign(PUESTOS_POR_OFICINA,c.puestos); localStorage.setItem('afimex-config-puestos',JSON.stringify(PUESTOS_POR_OFICINA)); }
-        if(c.posiciones && Object.keys(c.posiciones).length>0){ Object.keys(DATA_POSICIONES).forEach(k=>delete DATA_POSICIONES[k]); Object.assign(DATA_POSICIONES,c.posiciones); localStorage.setItem('afimex-config-posiciones',JSON.stringify(DATA_POSICIONES)); }
-        if(c.direcciones&& Object.keys(c.direcciones).length>0){ Object.keys(OFICINAS_DIR).forEach(k=>delete OFICINAS_DIR[k]); Object.assign(OFICINAS_DIR,c.direcciones); localStorage.setItem('afimex-config-oficinas-dir',JSON.stringify(OFICINAS_DIR)); }
-        if(c.actividades&& Object.keys(c.actividades).length>0){ Object.keys(ACTIVIDADES).forEach(k=>delete ACTIVIDADES[k]); Object.assign(ACTIVIDADES,c.actividades); localStorage.setItem('afimex-config-actividades',JSON.stringify(ACTIVIDADES)); }
-        if(c.prestaciones&&Object.keys(c.prestaciones).length>0){ Object.keys(PRESTACIONES_CONFIG).forEach(k=>delete PRESTACIONES_CONFIG[k]); Object.assign(PRESTACIONES_CONFIG,c.prestaciones); localStorage.setItem('afimex-config-prestaciones',JSON.stringify(PRESTACIONES_CONFIG)); }
-        if(c.salarios&&c.salarios.length>0){ DATA_SALARIOS.splice(0,DATA_SALARIOS.length,...c.salarios); localStorage.setItem('afimex-config-salarios',JSON.stringify(DATA_SALARIOS)); }
-        if(c.registrosPatronales&&c.registrosPatronales.length>0){ DATA_REGISTROS_PATRONALES.splice(0,DATA_REGISTROS_PATRONALES.length,...c.registrosPatronales); localStorage.setItem('afimex-config-rp',JSON.stringify(DATA_REGISTROS_PATRONALES)); }
-        if(c.docFiniq&&Object.keys(c.docFiniq).length>0){ window.DOC_FINIQ_CONFIG=c.docFiniq; localStorage.setItem('afimex-config-docfiniq',JSON.stringify(c.docFiniq)); }
+        if(c.nominas    && Array.isArray(c.nominas))                { DATA_NOMINAS.splice(0,DATA_NOMINAS.length,...c.nominas); localStorage.setItem('afimex-config-nominas',JSON.stringify(DATA_NOMINAS)); }
+        if(c.iata       && typeof c.iata==='object')                { Object.keys(IATA_MAP).forEach(k=>delete IATA_MAP[k]); Object.assign(IATA_MAP,c.iata); localStorage.setItem('afimex-config-iata',JSON.stringify(IATA_MAP)); }
+        if(c.puestos    && typeof c.puestos==='object')             { Object.keys(PUESTOS_POR_OFICINA).forEach(k=>delete PUESTOS_POR_OFICINA[k]); Object.assign(PUESTOS_POR_OFICINA,c.puestos); localStorage.setItem('afimex-config-puestos',JSON.stringify(PUESTOS_POR_OFICINA)); }
+        if(c.posiciones && typeof c.posiciones==='object')          { Object.keys(DATA_POSICIONES).forEach(k=>delete DATA_POSICIONES[k]); Object.assign(DATA_POSICIONES,c.posiciones); localStorage.setItem('afimex-config-posiciones',JSON.stringify(DATA_POSICIONES)); }
+        if(c.direcciones&& typeof c.direcciones==='object')         { Object.keys(OFICINAS_DIR).forEach(k=>delete OFICINAS_DIR[k]); Object.assign(OFICINAS_DIR,c.direcciones); localStorage.setItem('afimex-config-oficinas-dir',JSON.stringify(OFICINAS_DIR)); }
+        if(c.actividades&& typeof c.actividades==='object')         { Object.keys(ACTIVIDADES).forEach(k=>delete ACTIVIDADES[k]); Object.assign(ACTIVIDADES,c.actividades); localStorage.setItem('afimex-config-actividades',JSON.stringify(ACTIVIDADES)); }
+        if(c.prestaciones&&typeof c.prestaciones==='object')        { Object.keys(PRESTACIONES_CONFIG).forEach(k=>delete PRESTACIONES_CONFIG[k]); Object.assign(PRESTACIONES_CONFIG,c.prestaciones); localStorage.setItem('afimex-config-prestaciones',JSON.stringify(PRESTACIONES_CONFIG)); }
+        if(c.salarios   && Array.isArray(c.salarios))               { DATA_SALARIOS.splice(0,DATA_SALARIOS.length,...c.salarios); localStorage.setItem('afimex-config-salarios',JSON.stringify(DATA_SALARIOS)); }
+        if(c.registrosPatronales && Array.isArray(c.registrosPatronales)){ DATA_REGISTROS_PATRONALES.splice(0,DATA_REGISTROS_PATRONALES.length,...c.registrosPatronales); localStorage.setItem('afimex-config-rp',JSON.stringify(DATA_REGISTROS_PATRONALES)); }
+        if(c.docFiniq   && typeof c.docFiniq==='object')            { window.DOC_FINIQ_CONFIG=c.docFiniq; localStorage.setItem('afimex-config-docfiniq',JSON.stringify(c.docFiniq)); }
       }
       try{ _incCargarDeRes(res); }catch(e){}
       // Cargar folios SV desde la nube
