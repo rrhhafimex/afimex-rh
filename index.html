@@ -452,6 +452,7 @@ async function gsCall(action, data){
     if(data.svFolios    && data.svFolios.length > 0)    await jsonpSend('SV_Folios',     data.svFolios);
     if(data.foliosManual&& data.foliosManual.length > 0) await jsonpSend('Folios_Manual', data.foliosManual);
     if(usuarios         && usuarios.length > 0)          await jsonpSend('Usuarios',      usuarios);
+    if(incapacidadesDB  && incapacidadesDB.length > 0)   await jsonpSend('Incapacidades', incapacidadesDB);
     return {ok:true};
   } else {
     // LEER siempre via JSONP — funciona en todas las computadoras sin problemas de CORS
@@ -677,55 +678,188 @@ async function sincronizarDesdeGSheets(){
   }
 }
 
-// ── GUARDAR todos los datos — solo expedientes y folios (rápido) ─
+// ── FUNCIONES ATÓMICAS — cada módulo sube solo su hoja ──────────
+
+async function syncExpedientes(){
+  localStorage.setItem('afimex-db', JSON.stringify(db));
+  if(!tieneGSheets()){ setSyncStatus('local'); return; }
+  setSyncStatus('saving');
+  try{ await jsonpSend('Expedientes', db); setSyncStatus('ok'); }catch(e){ setSyncStatus('error'); }
+}
+
+async function syncSeguimientos(){
+  localStorage.setItem('afimex-seguimientos', JSON.stringify(seguimientos));
+  if(!tieneGSheets()){ setSyncStatus('local'); return; }
+  setSyncStatus('saving');
+  try{ await jsonpSend('Seguimiento', seguimientos); setSyncStatus('ok'); }catch(e){ setSyncStatus('error'); }
+}
+
+async function syncFolios(){
+  localStorage.setItem('afimex-folios', JSON.stringify(foliosData));
+  if(!tieneGSheets()){ setSyncStatus('local'); return; }
+  setSyncStatus('saving');
+  try{ await jsonpSend('Folios', foliosData); setSyncStatus('ok'); }catch(e){ setSyncStatus('error'); }
+}
+
+async function syncFiniquitos(){
+  localStorage.setItem('afimex-finiquitos', JSON.stringify(finiquitosDB));
+  if(!tieneGSheets()){ setSyncStatus('local'); return; }
+  setSyncStatus('saving');
+  try{ await jsonpSend('Finiquitos', finiquitosDB); setSyncStatus('ok'); }catch(e){ setSyncStatus('error'); }
+}
+
+async function syncSVFolios(){
+  const lista = JSON.parse(localStorage.getItem('afimex-sv-folios')||'[]');
+  if(!tieneGSheets()){ setSyncStatus('local'); return; }
+  setSyncStatus('saving');
+  try{ if(lista.length>0) await jsonpSend('SV_Folios', lista); setSyncStatus('ok'); }catch(e){ setSyncStatus('error'); }
+}
+
+async function syncFoliosManual(){
+  const lista = JSON.parse(localStorage.getItem('afimex-folios-manual')||'[]');
+  if(!tieneGSheets()){ setSyncStatus('local'); return; }
+  setSyncStatus('saving');
+  try{ if(lista.length>0) await jsonpSend('Folios_Manual', lista); setSyncStatus('ok'); }catch(e){ setSyncStatus('error'); }
+}
+
+// Alias compatibles con llamadas existentes
+async function saveDB(){
+  localStorage.setItem('afimex-db', JSON.stringify(db));
+  await syncExpedientes();
+  localStorage.setItem('afimex-seguimientos', JSON.stringify(seguimientos));
+  await syncSeguimientos();
+}
+async function saveSeg(){
+  localStorage.setItem('afimex-seguimientos', JSON.stringify(seguimientos));
+  await syncSeguimientos();
+}
+async function saveFolios(){
+  localStorage.setItem('afimex-folios', JSON.stringify(foliosData));
+  await syncFolios();
+}
+// syncAll se mantiene solo para compatibilidad con llamadas que guardan múltiples cosas a la vez
 async function syncAll(){
-  // Siempre guardar local
   localStorage.setItem('afimex-db', JSON.stringify(db));
   localStorage.setItem('afimex-seguimientos', JSON.stringify(seguimientos));
   localStorage.setItem('afimex-folios', JSON.stringify(foliosData));
   localStorage.setItem('afimex-finiquitos', JSON.stringify(finiquitosDB));
-
   if(!tieneGSheets()){ setSyncStatus('local'); return; }
-
-  // Solo subir expedientes operativos — los catálogos se suben con ⬆ Subir
+  setSyncStatus('saving');
   try{
-    setSyncStatus('saving');
-    await jsonpSend('Expedientes',  db);
-    await jsonpSend('Seguimiento',  seguimientos);
-    await jsonpSend('Folios',       foliosData);
-    await jsonpSend('Finiquitos',   finiquitosDB);
-    const svFolios     = JSON.parse(localStorage.getItem('afimex-sv-folios')||'[]');
-    const foliosManual = JSON.parse(localStorage.getItem('afimex-folios-manual')||'[]');
-    if(svFolios.length > 0)     await jsonpSend('SV_Folios',     svFolios);
-    if(foliosManual.length > 0) await jsonpSend('Folios_Manual', foliosManual);
-    const usuarios = await getUsuarios();
-    if(usuarios.length > 0)     await jsonpSend('Usuarios',      usuarios);
+    await jsonpSend('Expedientes', db);
+    await jsonpSend('Seguimiento', seguimientos);
+    await jsonpSend('Folios',      foliosData);
+    await jsonpSend('Finiquitos',  finiquitosDB);
     setSyncStatus('ok');
-  } catch(e){
+  }catch(e){ setSyncStatus('error'); }
+}
+
+// ── ⬆ SUBIR TODO (solo admin) — baja Drive, fusiona, sube ──────
+async function subirTodoANube(){
+  if(!tieneGSheets()){ showToast('Configura la URL del Apps Script primero','#dc2626'); return; }
+  if(!confirm('⬆ Subir todo a Google Sheets\n\nEl sistema descargará primero los datos actuales de Drive, fusionará con los datos locales (sin perder registros de otros usuarios) y luego subirá todo.\n\n¿Continuar?')) return;
+  try{
+    setSyncStatus('loading');
+    showLoading('⬆ Subiendo todo', 'Descargando datos de Drive para fusionar antes de subir...');
+    // 1. Bajar Drive
+    const res = await gsCall('loadAll', {});
+    if(res && res.ok){
+      // 2. Fusionar — Drive gana en registros que el admin no tiene localmente
+      // Expedientes: unir por número de nómina, los locales tienen prioridad
+      const dbRemota = res.db || [];
+      const nomLocales = new Set(db.map(e=>e.nom));
+      const soloEnDrive = dbRemota.filter(e=>!nomLocales.has(e.nom));
+      db = [...db, ...soloEnDrive];
+      localStorage.setItem('afimex-db', JSON.stringify(db));
+
+      // Seguimientos: alinear por índice — usar el mayor avance entre local y Drive
+      const segRemoto = res.seguimientos || [];
+      seguimientos = db.map((_,i)=>{
+        const loc = seguimientos[i] || {};
+        const rem = segRemoto[i]    || {};
+        return {
+          s1: loc.s1||rem.s1||false,
+          s2: loc.s2||rem.s2||false,
+          s3: loc.s3||rem.s3||false,
+          comentario: loc.comentario||rem.comentario||'',
+          estatus: loc.estatus||rem.estatus||'activo',
+        };
+      });
+      localStorage.setItem('afimex-seguimientos', JSON.stringify(seguimientos));
+
+      // Finiquitos: unir por ID, los locales tienen prioridad
+      const finRemoto = res.finiquitos || [];
+      const idsLocales = new Set(finiquitosDB.map(f=>f.id));
+      const finSoloDrive = finRemoto.filter(f=>!idsLocales.has(f.id));
+      finiquitosDB = [...finiquitosDB, ...finSoloDrive];
+      localStorage.setItem('afimex-finiquitos', JSON.stringify(finiquitosDB));
+
+      // Incapacidades: unir por ID
+      const incRemota = res.incapacidades || [];
+      const incIdsLocales = new Set(incapacidadesDB.map(i=>i.id));
+      const incSoloDrive = incRemota.filter(i=>!incIdsLocales.has(i.id));
+      incapacidadesDB = [...incapacidadesDB, ...incSoloDrive];
+      localStorage.setItem('afimex-incapacidades', JSON.stringify(incapacidadesDB));
+
+      // SV_Folios y Folios_Manual: unir por folio
+      const svLocal  = JSON.parse(localStorage.getItem('afimex-sv-folios')||'[]');
+      const svDrive  = res.svFolios || [];
+      const svFoliosSet = new Set(svLocal.map(f=>f.folio));
+      const svMerge  = [...svLocal, ...svDrive.filter(f=>!svFoliosSet.has(f.folio))];
+      localStorage.setItem('afimex-sv-folios', JSON.stringify(svMerge));
+
+      const fmLocal  = JSON.parse(localStorage.getItem('afimex-folios-manual')||'[]');
+      const fmDrive  = res.foliosManual || [];
+      const fmSet    = new Set(fmLocal.map(f=>f.folio||f.id));
+      const fmMerge  = [...fmLocal, ...fmDrive.filter(f=>!fmSet.has(f.folio||f.id))];
+      localStorage.setItem('afimex-folios-manual', JSON.stringify(fmMerge));
+    }
+    // 3. Subir todo fusionado
+    showLoading('⬆ Subiendo todo', 'Enviando datos fusionados a Google Sheets...');
+    setSyncStatus('saving');
+    const usuarios = await getUsuarios();
+    const catalogos = {
+      nominas:     DATA_NOMINAS,
+      iata:        IATA_MAP,
+      puestos:     PUESTOS_POR_OFICINA,
+      posiciones:  DATA_POSICIONES,
+      direcciones: OFICINAS_DIR,
+      actividades: ACTIVIDADES,
+      prestaciones:PRESTACIONES_CONFIG,
+      docFiniq:    window.DOC_FINIQ_CONFIG || {},
+      registrosPatronales: DATA_REGISTROS_PATRONALES,
+      salarios:    DATA_SALARIOS,
+    };
+    await jsonpSend('Expedientes',      db);
+    await jsonpSend('Seguimiento',      seguimientos);
+    await jsonpSend('Folios',           foliosData);
+    await jsonpSend('Finiquitos',       finiquitosDB);
+    await jsonpSend('Incapacidades',    incapacidadesDB);
+    await jsonpSend('Cat_Nominas',      catalogos.nominas);
+    await jsonpSend('Cat_IATA',         catalogos.iata);
+    await jsonpSend('Cat_Puestos',      catalogos.puestos);
+    await jsonpSend('Cat_Posiciones',   catalogos.posiciones);
+    await jsonpSend('Cat_Direcciones',  catalogos.direcciones);
+    await jsonpSend('Cat_Actividades',  catalogos.actividades);
+    await jsonpSend('Cat_Prestaciones', catalogos.prestaciones);
+    await jsonpSend('Cat_DocFiniq',     catalogos.docFiniq);
+    await jsonpSend('Cat_RegPatronal',  catalogos.registrosPatronales);
+    await jsonpSend('Cat_Salarios',     catalogos.salarios);
+    const svM = JSON.parse(localStorage.getItem('afimex-sv-folios')||'[]');
+    const fmM = JSON.parse(localStorage.getItem('afimex-folios-manual')||'[]');
+    if(svM.length > 0)     await jsonpSend('SV_Folios',     svM);
+    if(fmM.length > 0)     await jsonpSend('Folios_Manual', fmM);
+    if(usuarios.length > 0) await jsonpSend('Usuarios',     usuarios);
+    setSyncStatus('ok');
+    hideLoading();
+    render();
+    showToast('✓ Todo subido correctamente a Google Sheets (datos fusionados)');
+  }catch(e){
     setSyncStatus('error');
-    console.warn('Error al sincronizar:', e);
+    hideLoading();
+    showToast('Error al subir: '+e.message,'#dc2626');
   }
 }
-
-// Guardar solo expedientes y seguimientos (rápido)
-async function saveDB(){
-  localStorage.setItem('afimex-db', JSON.stringify(db));
-  if(!tieneGSheets()) return;
-  setSyncStatus('saving');
-  try {
-    await Promise.all([
-      jsonpSend('Expedientes', db),
-      jsonpSend('Seguimiento', seguimientos),
-    ]);
-    setSyncStatus('ok');
-  } catch(e){ setSyncStatus('error'); }
-}
-async function saveSeg(){
-  localStorage.setItem('afimex-seguimientos', JSON.stringify(seguimientos));
-  if(!tieneGSheets()) return;
-  try { await jsonpSend('Seguimiento', seguimientos); } catch(e){}
-}
-async function saveFolios(){ await syncAll(); }
 
 // ─── HELPERS ──────────────────────────────────────────────────────────────────
 function diasDesde(f){if(!f)return 0;const d=new Date(f);d.setHours(0,0,0,0);return Math.max(0,Math.floor((today-d)/86400000));}
@@ -740,7 +874,7 @@ function folioEditar(iata, numActual){
   const n = parseInt(nuevo);
   if(isNaN(n) || n < 0){ showToast('Número inválido','#dc2626'); return; }
   foliosData[iata] = n;
-  syncAll();
+  syncFolios();
   render();
   showToast(`✓ Consecutivo de ${iata} actualizado a ${n}`);
 }
@@ -789,7 +923,7 @@ async function folioAgregarManual(){
     // Subir inmediatamente a la nube
     if(tieneGSheets()) jsonpSend('Folios_Manual', lista);
   }catch(e){}
-  await syncAll();
+  await syncFolios();
   render();
   showToast(`✓ Folio generado: ${folio}`);
 }
@@ -822,7 +956,7 @@ function renderNav(){
   document.getElementById('nav-links').innerHTML=tabs.map(t=>`<button class="nav-btn ${currentTab===t?'active':''}" onclick="showTab('${t}')">${TAB_LABELS[t]}</button>`).join('');
 
   const syncBtn = tieneGSheets()
-    ? `${currentRole === 'admin' ? `<button class="btn-role" onclick="subirCatalogosANube()" title="Subir catálogos locales a Google Sheets" style="background:rgba(255,255,255,.12);margin-right:4px">⬆ Subir</button>` : ''}<button class="btn-role" onclick="sincronizarDesdeGSheets()" title="Descargar datos de Google Sheets" style="background:rgba(255,255,255,.15);margin-right:6px">⬇ Bajar</button>`
+    ? `${currentRole === 'admin' ? `<button class="btn-role" onclick="subirTodoANube()" title="Subir TODO a Google Sheets (fusiona con Drive primero)" style="background:rgba(255,255,255,.12);margin-right:4px">⬆ Subir</button>` : ''}<button class="btn-role" onclick="sincronizarDesdeGSheets()" title="Descargar todos los datos de Google Sheets" style="background:rgba(255,255,255,.15);margin-right:6px">⬇ Bajar</button>`
     : '';
 
   const userName = currentUser ? currentUser.nombre : '';
@@ -5269,7 +5403,7 @@ async function guardarFiniquito(){
   };
   finiquitosDB.push(registro);
   showToast('✓ Finiquito registrado — '+registro.id);
-  await syncAll();
+  await syncFiniquitos();
 }
 
 function finiqRefresh(){
@@ -5712,7 +5846,7 @@ function finiqImportar(){
       const idsActuales=new Set(finiquitosDB.map(f=>f.id));
       const nuevos=arr.filter(f=>!idsActuales.has(f.id));
       finiquitosDB=[...finiquitosDB,...nuevos];
-      await syncAll();
+      await syncFiniquitos();
       render();
       showToast('✓ Importados '+nuevos.length+' finiquitos nuevos ('+arr.length+' en archivo)');
     }catch(e){showToast('Error al leer el archivo: '+e.message,'#dc2626');}
@@ -5777,7 +5911,7 @@ function finiqCargar(id, irAFiniquitos){
 async function finiqEliminar(id){
   if(!confirm('¿Eliminar este finiquito del historial?')) return;
   finiquitosDB=finiquitosDB.filter(x=>x.id!==id);
-  await syncAll();
+  await syncFiniquitos();
   render();
 }
 
@@ -6986,7 +7120,53 @@ const INC_TIPOS = {
 
 function incapacidadesHTML(){
   return `<div class="content" style="padding:20px" id="inc-root">
-    ${_incCalHTML()}
+    <div style="display:flex;gap:16px;align-items:flex-start">
+      <div style="flex:1;min-width:0">${_incCalHTML()}</div>
+      ${_incAlertasHTML()}
+    </div>
+  </div>`;
+}
+
+function _incAlertasHTML(){
+  const hoy = new Date(); hoy.setHours(0,0,0,0);
+  const en5 = new Date(hoy); en5.setDate(en5.getDate()+5);
+  const proximas = incapacidadesDB.filter(i=>{
+    if(!i.activa) return false;
+    const fin = new Date(i.fin+'T00:00:00');
+    return fin >= hoy && fin <= en5;
+  }).sort((a,b)=>a.fin.localeCompare(b.fin));
+
+  const filas = proximas.map(i=>{
+    const fin = new Date(i.fin+'T00:00:00');
+    const diasRestantes = Math.round((fin-hoy)/(1000*60*60*24));
+    const color = diasRestantes===0?'#dc2626':diasRestantes<=2?'#ea580c':'#d97706';
+    const bgColor = diasRestantes===0?'#fef2f2':diasRestantes<=2?'#fff7ed':'#fffbeb';
+    const etiqueta = diasRestantes===0?'Hoy vence':diasRestantes===1?'Vence mañana':`Vence en ${diasRestantes} días`;
+    const tipo = INC_TIPOS[i.tipo]||{label:i.tipo||'—'};
+    return `<div style="background:${bgColor};border-left:3px solid ${color};border-radius:6px;padding:10px 12px;margin-bottom:8px">
+      <div style="font-size:12px;font-weight:700;color:${color};margin-bottom:2px">${etiqueta}</div>
+      <div style="font-size:13px;font-weight:600;color:var(--text1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${i.nombre}">${i.nombre}</div>
+      <div style="font-size:11px;color:var(--text2);margin-top:2px">${tipo.label} · Vence: ${i.fin.split('-').reverse().join('/')}</div>
+    </div>`;
+  }).join('');
+
+  return `<div style="width:220px;flex-shrink:0">
+    <div style="background:white;border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;position:sticky;top:16px">
+      <div style="background:var(--afimex-blue);padding:10px 14px;display:flex;align-items:center;gap:6px">
+        <span style="font-size:14px">🔔</span>
+        <span style="font-size:13px;font-weight:700;color:white">Alertas de Vencimiento</span>
+      </div>
+      <div style="padding:10px">
+        ${proximas.length===0
+          ? `<div style="text-align:center;padding:20px 10px;color:var(--text2);font-size:12px">
+               <div style="font-size:24px;margin-bottom:6px">✅</div>
+               Sin incapacidades próximas a vencer
+             </div>`
+          : filas
+        }
+      </div>
+      ${proximas.length>0?`<div style="padding:6px 10px 10px;font-size:11px;color:var(--text2);text-align:center">Incapacidades que vencen en ≤ 5 días</div>`:''}
+    </div>
   </div>`;
 }
 
@@ -7072,7 +7252,8 @@ function _incIrHoy(){
 function _incSetVista(v){ _incCal.vista=v; _incRender(); }
 function _incRender(){
   const r=document.getElementById('inc-root');
-  if(r) r.innerHTML=_incCalHTML();
+  if(!r) return;
+  r.innerHTML=`<div style="display:flex;gap:16px;align-items:flex-start"><div style="flex:1;min-width:0">${_incCalHTML()}</div>${_incAlertasHTML()}</div>`;
 }
 
 // Obtener incapacidades activas en un rango de fecha
