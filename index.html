@@ -165,7 +165,7 @@ input.field-ok { border-color: #16a34a; background: #f0fdf4; }
   <div class="topbar no-print">
     <div>
       <div class="topbar-title">Afimex Paquetería — Sistema RH</div>
-      <div class="topbar-sub">V 11.1.9 | Recursos Humanos</div>
+      <div class="topbar-sub">V 11.2.0 | Recursos Humanos</div>
     </div>
     <div style="display:flex;align-items:center;gap:12px">
       <div id="sync-status" class="sync-badge sync-local">💾 Solo local</div>
@@ -791,7 +791,7 @@ async function syncAll(){
   }catch(e){ setSyncStatus('error'); }
 }
 
-// ── ⬆ SUBIR TODO (solo admin) — sube en paralelo por grupos ──
+// ── ⬆ SUBIR TODO (solo admin) — secuencial para evitar colisiones de chunks ──
 async function subirTodoANube(){
   if(!tieneGSheets()){ showToast('Configura la URL del Apps Script primero','#dc2626'); return; }
   if(!confirm('⬆ Subir todo a Google Sheets\n\n¿Continuar?')) return;
@@ -801,38 +801,32 @@ async function subirTodoANube(){
     const svM = JSON.parse(localStorage.getItem('afimex-sv-folios')||'[]');
     const fmM = JSON.parse(localStorage.getItem('afimex-folios-manual')||'[]');
 
-    showLoading('⬆ Subiendo datos operativos...', 'Expedientes, finiquitos, incapacidades...');
-    // Grupo 1: datos operativos en paralelo
-    await Promise.all([
-      jsonpSend('Expedientes',   db),
-      jsonpSend('Seguimiento',   seguimientos),
-      jsonpSend('Folios',        foliosData),
-      jsonpSend('Finiquitos',    finiquitosDB),
-      jsonpSend('Incapacidades', incapacidadesDB),
-    ]);
+    const hojas = [
+      {label:'Expedientes',   fn:()=>jsonpSend('Expedientes',   db)},
+      {label:'Seguimiento',   fn:()=>jsonpSend('Seguimiento',   seguimientos)},
+      {label:'Folios',        fn:()=>jsonpSend('Folios',        foliosData)},
+      {label:'Finiquitos',    fn:()=>jsonpSend('Finiquitos',    finiquitosDB)},
+      {label:'Incapacidades', fn:()=>jsonpSend('Incapacidades', incapacidadesDB)},
+      {label:'Cat_Nominas',   fn:()=>jsonpSend('Cat_Nominas',   DATA_NOMINAS)},
+      {label:'Cat_IATA',      fn:()=>jsonpSend('Cat_IATA',      IATA_MAP)},
+      {label:'Cat_Puestos',   fn:()=>jsonpSend('Cat_Puestos',   PUESTOS_POR_OFICINA)},
+      {label:'Cat_Posiciones',fn:()=>jsonpSend('Cat_Posiciones',DATA_POSICIONES)},
+      {label:'Cat_Direcciones',fn:()=>jsonpSend('Cat_Direcciones',OFICINAS_DIR)},
+      {label:'Cat_Actividades',fn:()=>jsonpSend('Cat_Actividades',ACTIVIDADES)},
+      {label:'Cat_Prestaciones',fn:()=>jsonpSend('Cat_Prestaciones',PRESTACIONES_CONFIG)},
+      {label:'Cat_DocFiniq',  fn:()=>jsonpSend('Cat_DocFiniq',  window.DOC_FINIQ_CONFIG||{})},
+      {label:'Cat_RegPatronal',fn:()=>jsonpSend('Cat_RegPatronal',DATA_REGISTROS_PATRONALES)},
+      {label:'Cat_Salarios',  fn:()=>jsonpSend('Cat_Salarios',  DATA_SALARIOS)},
+    ];
+    if(svM.length > 0)      hojas.push({label:'SV_Folios',    fn:()=>jsonpSend('SV_Folios',    svM)});
+    if(fmM.length > 0)      hojas.push({label:'Folios_Manual',fn:()=>jsonpSend('Folios_Manual',fmM)});
+    if(usuarios.length > 0) hojas.push({label:'Usuarios',     fn:()=>jsonpSend('Usuarios',     usuarios)});
 
-    showLoading('⬆ Subiendo catálogos...', 'Nóminas, puestos, posiciones y configuración...');
-    // Grupo 2: catálogos en paralelo
-    await Promise.all([
-      jsonpSend('Cat_Nominas',      DATA_NOMINAS),
-      jsonpSend('Cat_IATA',         IATA_MAP),
-      jsonpSend('Cat_Puestos',      PUESTOS_POR_OFICINA),
-      jsonpSend('Cat_Posiciones',   DATA_POSICIONES),
-      jsonpSend('Cat_Direcciones',  OFICINAS_DIR),
-      jsonpSend('Cat_Actividades',  ACTIVIDADES),
-      jsonpSend('Cat_Prestaciones', PRESTACIONES_CONFIG),
-      jsonpSend('Cat_DocFiniq',     window.DOC_FINIQ_CONFIG || {}),
-      jsonpSend('Cat_RegPatronal',  DATA_REGISTROS_PATRONALES),
-      jsonpSend('Cat_Salarios',     DATA_SALARIOS),
-    ]);
-
-    showLoading('⬆ Subiendo folios y usuarios...', 'Casi listo...');
-    // Grupo 3: complementarios en paralelo
-    const g3 = [];
-    if(svM.length > 0)      g3.push(jsonpSend('SV_Folios',     svM));
-    if(fmM.length > 0)      g3.push(jsonpSend('Folios_Manual', fmM));
-    if(usuarios.length > 0) g3.push(jsonpSend('Usuarios',      usuarios));
-    if(g3.length > 0) await Promise.all(g3);
+    for(let i=0; i<hojas.length; i++){
+      const h = hojas[i];
+      showLoading('⬆ Subiendo ('+(i+1)+'/'+hojas.length+')', h.label+'...');
+      await h.fn();
+    }
 
     setSyncStatus('ok');
     hideLoading();
