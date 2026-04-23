@@ -165,7 +165,7 @@ input.field-ok { border-color: #16a34a; background: #f0fdf4; }
   <div class="topbar no-print">
     <div>
       <div class="topbar-title">Afimex Paquetería — Sistema RH</div>
-      <div class="topbar-sub">V 11.2.0 | Recursos Humanos</div>
+      <div class="topbar-sub">V 11.1.12 | Recursos Humanos</div>
     </div>
     <div style="display:flex;align-items:center;gap:12px">
       <div id="sync-status" class="sync-badge sync-local">💾 Solo local</div>
@@ -5276,7 +5276,29 @@ async function configGuardar(){
   localStorage.setItem('afimex-config-salarios',  JSON.stringify(DATA_SALARIOS));
   localStorage.setItem('afimex-config-rp',        JSON.stringify(DATA_REGISTROS_PATRONALES));
   localStorage.setItem('afimex-config-docfiniq',     JSON.stringify(window.DOC_FINIQ_CONFIG||{}));
-  showToast('✓ Configuración guardada localmente. Presiona ⬆ Subir para sincronizar con la nube.');
+  // Sincronizar catálogos a Drive secuencialmente
+  if(tieneGSheets()){
+    setSyncStatus('saving');
+    try{
+      await jsonpSend('Cat_Nominas',      DATA_NOMINAS);
+      await jsonpSend('Cat_IATA',         IATA_MAP);
+      await jsonpSend('Cat_Puestos',      PUESTOS_POR_OFICINA);
+      await jsonpSend('Cat_Posiciones',   DATA_POSICIONES);
+      await jsonpSend('Cat_Direcciones',  OFICINAS_DIR);
+      await jsonpSend('Cat_Prestaciones', PRESTACIONES_CONFIG);
+      await jsonpSend('Cat_Actividades',  ACTIVIDADES);
+      await jsonpSend('Cat_Salarios',     DATA_SALARIOS);
+      await jsonpSend('Cat_RegPatronal',  DATA_REGISTROS_PATRONALES);
+      await jsonpSend('Cat_DocFiniq',     window.DOC_FINIQ_CONFIG||{});
+      setSyncStatus('ok');
+      showToast('✓ Catálogos guardados y sincronizados con Drive');
+    }catch(e){
+      setSyncStatus('error');
+      showToast('✓ Guardado local, pero no se pudo sincronizar con Drive','#d97706');
+    }
+  } else {
+    showToast('✓ Configuración guardada localmente');
+  }
   render();
 }
 
