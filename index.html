@@ -165,7 +165,7 @@ input.field-ok { border-color: #16a34a; background: #f0fdf4; }
   <div class="topbar no-print">
     <div>
       <div class="topbar-title">Afimex Paquetería — Sistema RH</div>
-      <div class="topbar-sub">V 11.1.6 | Recursos Humanos</div>
+      <div class="topbar-sub">V 11.1.7 | Recursos Humanos</div>
     </div>
     <div style="display:flex;align-items:center;gap:12px">
       <div id="sync-status" class="sync-badge sync-local">💾 Solo local</div>
@@ -618,66 +618,53 @@ async function sincronizarDesdeGSheets(){
   }
   try{
     setSyncStatus('loading');
-    showLoading('⬇ Descargando de la nube', 'Obteniendo expedientes, catálogos y configuración desde Google Sheets...');
-    const res = await gsCall('loadAll', {});
-    if(res && res.ok){
-      if(res.db && res.db.length > 0){
-        db = res.db;
-        localStorage.setItem('afimex-db', JSON.stringify(db));
-      }
-      if(res.seguimientos && res.seguimientos.length > 0){
-        seguimientos = res.seguimientos;
-        localStorage.setItem('afimex-seguimientos', JSON.stringify(seguimientos));
-      }
-      if(res.folios && Object.keys(res.folios).length > 0){
-        foliosData = res.folios;
-        localStorage.setItem('afimex-folios', JSON.stringify(foliosData));
-      }
-      if(res.finiquitos && res.finiquitos.length > 0){
-        finiquitosDB = res.finiquitos;
-        localStorage.setItem('afimex-finiquitos', JSON.stringify(finiquitosDB));
-      }
-      if(res.usuarios && res.usuarios.length > 0){
-        localStorage.setItem('afimex-usuarios', JSON.stringify(res.usuarios));
-      }
-      if(res.catalogos){
-        const c = res.catalogos;
-        if(c.nominas    && Array.isArray(c.nominas))                { DATA_NOMINAS.splice(0,DATA_NOMINAS.length,...c.nominas); localStorage.setItem('afimex-config-nominas',JSON.stringify(DATA_NOMINAS)); }
-        if(c.iata       && typeof c.iata==='object')                { Object.keys(IATA_MAP).forEach(k=>delete IATA_MAP[k]); Object.assign(IATA_MAP,c.iata); localStorage.setItem('afimex-config-iata',JSON.stringify(IATA_MAP)); }
-        if(c.puestos    && typeof c.puestos==='object')             { Object.keys(PUESTOS_POR_OFICINA).forEach(k=>delete PUESTOS_POR_OFICINA[k]); Object.assign(PUESTOS_POR_OFICINA,c.puestos); localStorage.setItem('afimex-config-puestos',JSON.stringify(PUESTOS_POR_OFICINA)); }
-        if(c.posiciones && typeof c.posiciones==='object')          { Object.keys(DATA_POSICIONES).forEach(k=>delete DATA_POSICIONES[k]); Object.assign(DATA_POSICIONES,c.posiciones); localStorage.setItem('afimex-config-posiciones',JSON.stringify(DATA_POSICIONES)); }
-        if(c.direcciones&& typeof c.direcciones==='object')         { Object.keys(OFICINAS_DIR).forEach(k=>delete OFICINAS_DIR[k]); Object.assign(OFICINAS_DIR,c.direcciones); localStorage.setItem('afimex-config-oficinas-dir',JSON.stringify(OFICINAS_DIR)); }
-        if(c.actividades&& typeof c.actividades==='object')         { Object.keys(ACTIVIDADES).forEach(k=>delete ACTIVIDADES[k]); Object.assign(ACTIVIDADES,c.actividades); localStorage.setItem('afimex-config-actividades',JSON.stringify(ACTIVIDADES)); }
-        if(c.prestaciones&&typeof c.prestaciones==='object')        { Object.keys(PRESTACIONES_CONFIG).forEach(k=>delete PRESTACIONES_CONFIG[k]); Object.assign(PRESTACIONES_CONFIG,c.prestaciones); localStorage.setItem('afimex-config-prestaciones',JSON.stringify(PRESTACIONES_CONFIG)); }
-        if(c.salarios   && Array.isArray(c.salarios))               { DATA_SALARIOS.splice(0,DATA_SALARIOS.length,...c.salarios); localStorage.setItem('afimex-config-salarios',JSON.stringify(DATA_SALARIOS)); }
-        if(c.registrosPatronales && Array.isArray(c.registrosPatronales)){ DATA_REGISTROS_PATRONALES.splice(0,DATA_REGISTROS_PATRONALES.length,...c.registrosPatronales); localStorage.setItem('afimex-config-rp',JSON.stringify(DATA_REGISTROS_PATRONALES)); }
-        if(c.docFiniq   && typeof c.docFiniq==='object')            { window.DOC_FINIQ_CONFIG=c.docFiniq; localStorage.setItem('afimex-config-docfiniq',JSON.stringify(c.docFiniq)); }
-      }
-      try{ _incCargarDeRes(res); }catch(e){}
-      // Cargar folios SV desde la nube
-      if(res.svFolios && res.svFolios.length > 0){
-        localStorage.setItem('afimex-sv-folios', JSON.stringify(res.svFolios));
-      }
-      // Cargar folios manuales desde la nube
-      if(res.foliosManual && res.foliosManual.length > 0){
-        localStorage.setItem('afimex-folios-manual', JSON.stringify(res.foliosManual));
-      }
-      hideLoading();
-      setSyncStatus('ok');
-      showToast('✓ Datos y catálogos sincronizados correctamente');
-      render();
+    showLoading('⬇ Descargando datos operativos', 'Obteniendo expedientes, finiquitos e incapacidades...');
+
+    // ── 1. Cargar datos operativos ──
+    const resOp = await gsCall('loadOperativos', {});
+    if(resOp && resOp.ok){
+      if(resOp.db && resOp.db.length > 0){ db = resOp.db; localStorage.setItem('afimex-db', JSON.stringify(db)); }
+      if(resOp.seguimientos && resOp.seguimientos.length > 0){ seguimientos = resOp.seguimientos; localStorage.setItem('afimex-seguimientos', JSON.stringify(seguimientos)); }
+      if(resOp.folios && Object.keys(resOp.folios).length > 0){ foliosData = resOp.folios; localStorage.setItem('afimex-folios', JSON.stringify(foliosData)); }
+      if(resOp.finiquitos && resOp.finiquitos.length > 0){ finiquitosDB = resOp.finiquitos; localStorage.setItem('afimex-finiquitos', JSON.stringify(finiquitosDB)); }
+      if(resOp.usuarios && resOp.usuarios.length > 0){ localStorage.setItem('afimex-usuarios', JSON.stringify(resOp.usuarios)); }
+      if(resOp.svFolios && resOp.svFolios.length > 0){ localStorage.setItem('afimex-sv-folios', JSON.stringify(resOp.svFolios)); }
+      if(resOp.foliosManual && resOp.foliosManual.length > 0){ localStorage.setItem('afimex-folios-manual', JSON.stringify(resOp.foliosManual)); }
+      try{ _incCargarDeRes(resOp); }catch(e){}
     } else {
-      hideLoading();
-      setSyncStatus('error');
-      showToast('Error al conectar con Google Sheets','#dc2626');
+      hideLoading(); setSyncStatus('error');
+      showToast('Error al descargar datos operativos','#dc2626');
+      return;
     }
+
+    // ── 2. Cargar catálogos por separado ──
+    showLoading('⬇ Descargando catálogos', 'Obteniendo nóminas, puestos, posiciones y configuración...');
+    const resCat = await gsCall('loadCatalogos', {});
+    if(resCat && resCat.ok && resCat.catalogos){
+      const c = resCat.catalogos;
+      if(c.nominas     && Array.isArray(c.nominas))               { DATA_NOMINAS.splice(0,DATA_NOMINAS.length,...c.nominas); localStorage.setItem('afimex-config-nominas',JSON.stringify(DATA_NOMINAS)); }
+      if(c.iata        && typeof c.iata==='object')                { Object.keys(IATA_MAP).forEach(k=>delete IATA_MAP[k]); Object.assign(IATA_MAP,c.iata); localStorage.setItem('afimex-config-iata',JSON.stringify(IATA_MAP)); }
+      if(c.puestos     && typeof c.puestos==='object')             { Object.keys(PUESTOS_POR_OFICINA).forEach(k=>delete PUESTOS_POR_OFICINA[k]); Object.assign(PUESTOS_POR_OFICINA,c.puestos); localStorage.setItem('afimex-config-puestos',JSON.stringify(PUESTOS_POR_OFICINA)); }
+      if(c.posiciones  && typeof c.posiciones==='object')          { Object.keys(DATA_POSICIONES).forEach(k=>delete DATA_POSICIONES[k]); Object.assign(DATA_POSICIONES,c.posiciones); localStorage.setItem('afimex-config-posiciones',JSON.stringify(DATA_POSICIONES)); }
+      if(c.direcciones && typeof c.direcciones==='object')         { Object.keys(OFICINAS_DIR).forEach(k=>delete OFICINAS_DIR[k]); Object.assign(OFICINAS_DIR,c.direcciones); localStorage.setItem('afimex-config-oficinas-dir',JSON.stringify(OFICINAS_DIR)); }
+      if(c.actividades && typeof c.actividades==='object')         { Object.keys(ACTIVIDADES).forEach(k=>delete ACTIVIDADES[k]); Object.assign(ACTIVIDADES,c.actividades); localStorage.setItem('afimex-config-actividades',JSON.stringify(ACTIVIDADES)); }
+      if(c.prestaciones&& typeof c.prestaciones==='object')        { Object.keys(PRESTACIONES_CONFIG).forEach(k=>delete PRESTACIONES_CONFIG[k]); Object.assign(PRESTACIONES_CONFIG,c.prestaciones); localStorage.setItem('afimex-config-prestaciones',JSON.stringify(PRESTACIONES_CONFIG)); }
+      if(c.salarios    && Array.isArray(c.salarios))               { DATA_SALARIOS.splice(0,DATA_SALARIOS.length,...c.salarios); localStorage.setItem('afimex-config-salarios',JSON.stringify(DATA_SALARIOS)); }
+      if(c.registrosPatronales && Array.isArray(c.registrosPatronales)){ DATA_REGISTROS_PATRONALES.splice(0,DATA_REGISTROS_PATRONALES.length,...c.registrosPatronales); localStorage.setItem('afimex-config-rp',JSON.stringify(DATA_REGISTROS_PATRONALES)); }
+      if(c.docFiniq    && typeof c.docFiniq==='object')            { window.DOC_FINIQ_CONFIG=c.docFiniq; localStorage.setItem('afimex-config-docfiniq',JSON.stringify(c.docFiniq)); }
+    } else {
+      showToast('⚠ Datos descargados, pero los catálogos no respondieron','#d97706');
+      hideLoading(); setSyncStatus('ok'); render(); return;
+    }
+
+    hideLoading(); setSyncStatus('ok');
+    showToast('✓ Datos y catálogos sincronizados correctamente');
+    render();
   } catch(e){
-    hideLoading();
-    setSyncStatus('error');
+    hideLoading(); setSyncStatus('error');
     showToast('No se pudo conectar con Google Sheets','#dc2626');
   }
 }
-
 // ── FUNCIONES ATÓMICAS — cada módulo sube solo su hoja ──────────
 
 async function syncExpedientes(){
