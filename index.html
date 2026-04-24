@@ -184,9 +184,9 @@ input.field-ok { border-color: #16a34a; background: #f0fdf4; }
 // ─── CONSTANTS ────────────────────────────────────────────────────────────────
 const ADMIN_PASS = '1006';
 const GENERALISTA_PASS = 'rh2024';
-const TABS_REC = ['altas','seguimiento','docs']; // Pestañas reclutador
-const TABS_NOM = ['baja','finiquitos','incapacidades']; // Pestañas nóminas
-const TABS_GER = ['altas','baja','seguimiento','base','docs','folios','incapacidades']; // Pestañas gerencia
+const TABS_REC = ['altas','seguimiento','docs','pendientes']; // Pestañas reclutador
+const TABS_NOM = ['baja','finiquitos','incapacidades','pendientes']; // Pestañas nóminas
+const TABS_GER = ['altas','baja','seguimiento','base','docs','folios','incapacidades','pendientes']; // Pestañas gerencia
 // ─── CATÁLOGO DE SALARIOS ────────────────────────────────────────────────────
 var DATA_SALARIOS = [
   { sd: 316,  sbc: 331.58, descripcion: "Salario Base Zona A" },
@@ -315,9 +315,9 @@ var OFICINAS_DIR = {
   "default": "Av. Adolfo Ruiz Cortines 3247 Col. Coyoacan, CP 64510, Monterrey, NL."
 };
 
-const TABS_GEN = ['altas','baja','seguimiento','docs','folios'];
-const TABS_ADM = ['altas','baja','seguimiento','base','docs','finiquitos','incapacidades','usuarios','config'];
-const TAB_LABELS = {altas:'📋 Alta de Expediente',baja:'🚪 Solicitud de Baja',seguimiento:'📊 Seguimiento de Ingresos',folios:'📁 Folios de Salida',base:'🗄️ Base de Datos',docs:'🖨️ Impresión de Documentos',usuarios:'👥 Usuarios',config:'⚙️ Catálogo',finiquitos:'💰 Finiquitos',incapacidades:'🏥 Incapacidades'};
+const TABS_GEN = ['altas','baja','seguimiento','docs','folios','pendientes'];
+const TABS_ADM = ['altas','baja','seguimiento','base','docs','finiquitos','incapacidades','usuarios','config','pendientes'];
+const TAB_LABELS = {altas:'📋 Alta de Expediente',baja:'🚪 Solicitud de Baja',seguimiento:'📊 Seguimiento de Ingresos',folios:'📁 Folios de Salida',base:'🗄️ Base de Datos',docs:'🖨️ Impresión de Documentos',usuarios:'👥 Usuarios',config:'⚙️ Catálogo',finiquitos:'💰 Finiquitos',incapacidades:'🏥 Incapacidades',pendientes:'📌 Pendientes'};
 
 // ─── STATE ────────────────────────────────────────────────────────────────────
 let currentTab='altas', currentType='semanal', isAdmin=false;
@@ -453,6 +453,7 @@ async function gsCall(action, data){
     if(data.foliosManual&& data.foliosManual.length > 0) await jsonpSend('Folios_Manual', data.foliosManual);
     if(usuarios         && usuarios.length > 0)          await jsonpSend('Usuarios',      usuarios);
     if(incapacidadesDB  && incapacidadesDB.length > 0)   await jsonpSend('Incapacidades', incapacidadesDB);
+    if(pendientesDB     && pendientesDB.length > 0)       await jsonpSend('Pendientes',    pendientesDB);
     return {ok:true};
   } else {
     // LEER siempre via JSONP — funciona en todas las computadoras sin problemas de CORS
@@ -636,7 +637,7 @@ async function sincronizarDesdeGSheets(){
     // Cargar cada hoja individualmente para evitar respuestas gigantes
     const hojas = [
       'Expedientes','Seguimiento','Folios','Finiquitos','Usuarios',
-      'SV_Folios','Folios_Manual','Incapacidades',
+      'SV_Folios','Folios_Manual','Incapacidades','Pendientes',
       'Cat_Nominas','Cat_IATA','Cat_Puestos','Cat_Posiciones',
       'Cat_Direcciones','Cat_Actividades','Cat_Prestaciones',
       'Cat_DocFiniq','Cat_RegPatronal','Cat_Salarios'
@@ -674,6 +675,9 @@ async function sincronizarDesdeGSheets(){
 
     const inc = resultados['Incapacidades'];
     if(inc && inc.length > 0){ incapacidadesDB = inc; localStorage.setItem('afimex-incapacidades', JSON.stringify(incapacidadesDB)); }
+
+    const pen = resultados['Pendientes'];
+    if(pen && pen.length > 0){ pendientesDB = pen; localStorage.setItem('afimex-pendientes', JSON.stringify(pendientesDB)); }
 
     // ── Aplicar catálogos ──
     const nom = resultados['Cat_Nominas'];
@@ -807,6 +811,7 @@ async function subirTodoANube(){
       {label:'Folios',        fn:()=>jsonpSend('Folios',        foliosData)},
       {label:'Finiquitos',    fn:()=>jsonpSend('Finiquitos',    finiquitosDB)},
       {label:'Incapacidades', fn:()=>jsonpSend('Incapacidades', incapacidadesDB)},
+      {label:'Pendientes',    fn:()=>jsonpSend('Pendientes',    pendientesDB)},
       {label:'Cat_Nominas',   fn:()=>jsonpSend('Cat_Nominas',   DATA_NOMINAS)},
       {label:'Cat_IATA',      fn:()=>jsonpSend('Cat_IATA',      IATA_MAP)},
       {label:'Cat_Puestos',   fn:()=>jsonpSend('Cat_Puestos',   PUESTOS_POR_OFICINA)},
@@ -2695,7 +2700,7 @@ function render(){
     mostrarLoginInicial();
     return;
   }
-  const map={altas:altasHTML,baja:bajaHTML,seguimiento:seguimientoHTML,folios:currentRole==='generalista'?foliosVistaHTML:foliosHTML,base:baseHTML,docs:docsHTML,config:configHTML,finiquitos:finiquitosHTML,incapacidades:incapacidadesHTML,usuarios:()=>'<div id="usuarios-loading" style="padding:20px;color:var(--text2)">Cargando...</div>'};
+  const map={altas:altasHTML,baja:bajaHTML,seguimiento:seguimientoHTML,folios:currentRole==='generalista'?foliosVistaHTML:foliosHTML,base:baseHTML,docs:docsHTML,config:configHTML,finiquitos:finiquitosHTML,incapacidades:incapacidadesHTML,pendientes:pendientesHTML,usuarios:()=>'<div id="usuarios-loading" style="padding:20px;color:var(--text2)">Cargando...</div>'};
   const _roleTabsR = currentRole==='admin' ? TABS_ADM :
                      currentRole==='generalista' ? TABS_GEN :
                      currentRole==='reclutador' ? TABS_REC :
@@ -7799,6 +7804,602 @@ function _incCargarDeRes(res){
     incapacidadesDB=res.incapacidades;
     localStorage.setItem('afimex-incapacidades',JSON.stringify(incapacidadesDB));
   }
+}
+
+// ─── PENDIENTES ───────────────────────────────────────────────────────────────
+var pendientesDB = [];
+try{ const _vp=localStorage.getItem('afimex-pendientes'); if(_vp) pendientesDB=JSON.parse(_vp); }catch(e){}
+
+function savePendientes(){
+  localStorage.setItem('afimex-pendientes', JSON.stringify(pendientesDB));
+  if(tieneGSheets()) jsonpSend('Pendientes', pendientesDB);
+}
+
+// Estado del módulo Pendientes
+var _penCal = {
+  anio: new Date().getFullYear(),
+  mes:  new Date().getMonth(),
+  vista: 'mes',
+  diaActual: new Date().getDate(),
+};
+
+var _penFiltroEstado = 'todos'; // 'todos' | 'pendiente' | 'en_proceso' | 'completado'
+var _penFiltroUsuario = '';
+
+const PEN_ESTADOS = {
+  'pendiente':   { label:'Pendiente',   color:'#dc2626', bg:'#fef2f2', border:'#fca5a5', icon:'🔴' },
+  'en_proceso':  { label:'En proceso',  color:'#d97706', bg:'#fffbeb', border:'#fcd34d', icon:'🟡' },
+  'completado':  { label:'Completado',  color:'#16a34a', bg:'#f0fdf4', border:'#86efac', icon:'✅' },
+};
+
+const PEN_PRIORIDADES = {
+  'alta':   { label:'Alta',   color:'#dc2626', bg:'#fef2f2' },
+  'media':  { label:'Media',  color:'#d97706', bg:'#fffbeb' },
+  'baja':   { label:'Baja',   color:'#16a34a', bg:'#f0fdf4' },
+};
+
+function _penFechaStr(anio, mes, dia){
+  return anio+'-'+String(mes+1).padStart(2,'0')+'-'+String(dia).padStart(2,'0');
+}
+
+function _penEnFecha(fechaStr){
+  return pendientesDB.filter(p=>{
+    if(p.fechaVencimiento !== fechaStr) return false;
+    if(_penFiltroEstado !== 'todos' && p.estado !== _penFiltroEstado) return false;
+    if(_penFiltroUsuario && !(p.asignadoA||[]).includes(_penFiltroUsuario)) return false;
+    return true;
+  });
+}
+
+function _penChip(pen, truncar){
+  const e = PEN_ESTADOS[pen.estado] || PEN_ESTADOS.pendiente;
+  const pr = PEN_PRIORIDADES[pen.prioridad] || PEN_PRIORIDADES.media;
+  const txt = truncar && pen.titulo.length>22 ? pen.titulo.substring(0,20)+'…' : pen.titulo;
+  return `<div onclick="event.stopPropagation();penVerDetalle('${pen.id}')"
+    style="background:${e.bg};border-left:3px solid ${e.border};color:${e.color};
+           padding:2px 6px;border-radius:3px;font-size:11px;font-weight:600;
+           cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+           margin-bottom:2px;max-width:100%"
+    title="${pen.titulo} — ${e.label} — ${pr.label} (vence: ${pen.fechaVencimiento||'sin fecha'})">
+    ${e.icon} ${txt}
+  </div>`;
+}
+
+function _penTituloNav(){
+  const meses=['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'];
+  const dias=['domingo','lunes','martes','miércoles','jueves','viernes','sábado'];
+  if(_penCal.vista==='mes') return meses[_penCal.mes]+' de '+_penCal.anio;
+  if(_penCal.vista==='dia'){
+    const d=new Date(_penCal.anio,_penCal.mes,_penCal.diaActual);
+    return dias[d.getDay()]+' '+_penCal.diaActual+' de '+meses[_penCal.mes]+' de '+_penCal.anio;
+  }
+  const lun=_penLunesDe(new Date(_penCal.anio,_penCal.mes,_penCal.diaActual));
+  const dom=new Date(lun); dom.setDate(dom.getDate()+6);
+  return meses[lun.getMonth()]+' '+lun.getDate()+' – '+dom.getDate()+' de '+_penCal.anio;
+}
+
+function _penNavegar(dir){
+  if(_penCal.vista==='mes'){
+    _penCal.mes+=dir;
+    if(_penCal.mes>11){_penCal.mes=0;_penCal.anio++;}
+    if(_penCal.mes<0){_penCal.mes=11;_penCal.anio--;}
+  } else if(_penCal.vista==='semana'){
+    _penCal.diaActual+=dir*7;
+    const d=new Date(_penCal.anio,_penCal.mes,_penCal.diaActual);
+    _penCal.anio=d.getFullYear(); _penCal.mes=d.getMonth(); _penCal.diaActual=d.getDate();
+  } else {
+    _penCal.diaActual+=dir;
+    const d=new Date(_penCal.anio,_penCal.mes,_penCal.diaActual);
+    _penCal.anio=d.getFullYear(); _penCal.mes=d.getMonth(); _penCal.diaActual=d.getDate();
+  }
+  _penRender();
+}
+function _penIrHoy(){ const h=new Date(); _penCal.anio=h.getFullYear(); _penCal.mes=h.getMonth(); _penCal.diaActual=h.getDate(); _penRender(); }
+function _penSetVista(v){ _penCal.vista=v; _penRender(); }
+
+function _penLunesDe(fecha){
+  const d=new Date(fecha);
+  const diff=(d.getDay()+6)%7;
+  d.setDate(d.getDate()-diff);
+  return d;
+}
+
+function _penVistaMes(){
+  const primerDia = new Date(_penCal.anio, _penCal.mes, 1).getDay();
+  const diasEnMes = new Date(_penCal.anio, _penCal.mes+1, 0).getDate();
+  const hoy = new Date(); hoy.setHours(0,0,0,0);
+  const offset = (primerDia+6)%7;
+  const cab=['lun','mar','mié','jue','vie','sáb','dom'];
+  let celdas='';
+  let celda=0;
+  for(let i=0;i<offset;i++){ celdas+=`<td style="background:var(--bg2);border:1px solid var(--border);vertical-align:top;min-height:90px;padding:4px"></td>`; celda++; }
+  for(let d=1;d<=diasEnMes;d++){
+    const fStr=_penFechaStr(_penCal.anio,_penCal.mes,d);
+    const esHoy=new Date(_penCal.anio,_penCal.mes,d).getTime()===hoy.getTime();
+    const pens=_penEnFecha(fStr);
+    const MAX_VIS=3;
+    const visibles=pens.slice(0,MAX_VIS);
+    const resto=pens.length-MAX_VIS;
+    celdas+=`<td style="border:1px solid var(--border);vertical-align:top;min-height:90px;padding:4px;background:${esHoy?'#fffbeb':'white'};cursor:pointer"
+              onclick="_penCal.diaActual=${d};_penCal.anio=${_penCal.anio};_penCal.mes=${_penCal.mes};_penSetVista('dia')">
+      <div style="font-size:12px;font-weight:${esHoy?700:400};${esHoy?'background:var(--afimex-orange);color:white;width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;margin-bottom:3px':'color:var(--text2);margin-bottom:3px'}">${d}</div>
+      ${visibles.map(p=>_penChip(p,true)).join('')}
+      ${resto>0?`<div style="font-size:11px;color:var(--afimex-blue);font-weight:600">+${resto} más</div>`:''}
+    </td>`;
+    celda++;
+    if(celda%7===0 && d<diasEnMes) celdas+=`</tr><tr>`;
+  }
+  const restoCeldas=(7-(celda%7))%7;
+  for(let i=0;i<restoCeldas;i++) celdas+=`<td style="background:var(--bg2);border:1px solid var(--border);vertical-align:top;min-height:90px;padding:4px"></td>`;
+  return `<div style="overflow-x:auto">
+  <table style="width:100%;border-collapse:collapse;table-layout:fixed">
+    <thead><tr>${cab.map(c=>`<th style="padding:8px;text-align:center;font-size:13px;font-weight:600;color:var(--text2);border:1px solid var(--border);background:var(--bg2)">${c}</th>`).join('')}</tr></thead>
+    <tbody><tr>${celdas}</tr></tbody>
+  </table></div>`;
+}
+
+function _penVistaSemana(){
+  const lun=_penLunesDe(new Date(_penCal.anio,_penCal.mes,_penCal.diaActual));
+  const dias=[];
+  for(let i=0;i<7;i++){ const d=new Date(lun); d.setDate(d.getDate()+i); dias.push(d); }
+  const hoy=new Date(); hoy.setHours(0,0,0,0);
+  const cab=['Lun','Mar','Mié','Jue','Vie','Sáb','Dom'];
+  const cols=dias.map((d,i)=>{
+    const fStr=_penFechaStr(d.getFullYear(),d.getMonth(),d.getDate());
+    const esHoy=d.getTime()===hoy.getTime();
+    const pens=_penEnFecha(fStr);
+    return `<td style="border:1px solid var(--border);vertical-align:top;padding:6px;min-height:120px;background:${esHoy?'#fffbeb':'white'};width:${100/7}%"
+              onclick="_penCal.anio=${d.getFullYear()};_penCal.mes=${d.getMonth()};_penCal.diaActual=${d.getDate()};_penSetVista('dia')">
+      <div style="font-size:12px;font-weight:600;color:${esHoy?'var(--afimex-orange)':'var(--text2)'};margin-bottom:6px;text-align:center">
+        ${cab[i]}<br>
+        <span style="font-size:18px;font-weight:700;color:${esHoy?'var(--afimex-orange)':'var(--text)'}">${d.getDate()}</span>
+      </div>
+      ${pens.map(p=>_penChip(p,true)).join('')}
+      ${pens.length===0?'<div style="font-size:11px;color:var(--border2);text-align:center;margin-top:20px">—</div>':''}
+    </td>`;
+  }).join('');
+  return `<div style="overflow-x:auto">
+  <table style="width:100%;border-collapse:collapse;table-layout:fixed">
+    <tbody><tr>${cols}</tr></tbody>
+  </table></div>`;
+}
+
+function _penVistaDia(){
+  const fStr=_penFechaStr(_penCal.anio,_penCal.mes,_penCal.diaActual);
+  const pens=_penEnFecha(fStr);
+  const meses=['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'];
+  return `<div style="padding:20px">
+    <div style="font-size:14px;color:var(--text2);margin-bottom:14px">
+      ${pens.length} actividad${pens.length!==1?'es':''} el ${_penCal.diaActual} de ${meses[_penCal.mes]} de ${_penCal.anio}
+    </div>
+    ${pens.length===0
+      ? `<div style="text-align:center;padding:40px;color:var(--text2);font-size:13px">Sin actividades programadas este día</div>`
+      : pens.map(pen=>{
+          const e=PEN_ESTADOS[pen.estado]||PEN_ESTADOS.pendiente;
+          const pr=PEN_PRIORIDADES[pen.prioridad]||PEN_PRIORIDADES.media;
+          const asig=(pen.asignadoA||[]).join(', ')||'Sin asignar';
+          return `<div style="background:${e.bg};border:1px solid ${e.border};border-left:5px solid ${e.color};
+                              border-radius:var(--radius-sm);padding:12px 16px;margin-bottom:10px;
+                              display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+            <div>
+              <div style="font-size:14px;font-weight:700;color:${e.color}">${e.icon} ${pen.titulo}</div>
+              <div style="font-size:12px;color:var(--text2);margin-top:2px">
+                <strong>${e.label}</strong> · Prioridad: <span style="color:${pr.color};font-weight:600">${pr.label}</span>
+                · Asignado a: ${asig}
+              </div>
+              ${pen.descripcion?`<div style="font-size:11px;color:var(--text2);margin-top:3px">📝 ${pen.descripcion}</div>`:''}
+            </div>
+            <div style="display:flex;gap:6px">
+              <button onclick="penEditarPendiente('${pen.id}')" class="btn btn-sm btn-secondary" style="font-size:11px">✏️ Editar</button>
+              <button onclick="penEliminar('${pen.id}')" class="btn btn-sm" style="font-size:11px;background:#fee2e2;color:#dc2626;border:1px solid #fca5a5">✕</button>
+            </div>
+          </div>`;
+        }).join('')
+    }
+    <div style="margin-top:14px">
+      <button onclick="penNuevoPendiente('${fStr}')" class="btn btn-primary btn-sm">+ Agregar actividad este día</button>
+    </div>
+  </div>`;
+}
+
+function _penListaHTML(){
+  // Vista Lista — todos los pendientes filtrados, ordenados por fecha y prioridad
+  const orden = {alta:0,media:1,baja:2};
+  let datos = pendientesDB.slice();
+  if(_penFiltroEstado!=='todos') datos=datos.filter(p=>p.estado===_penFiltroEstado);
+  if(_penFiltroUsuario) datos=datos.filter(p=>(p.asignadoA||[]).includes(_penFiltroUsuario));
+  datos.sort((a,b)=>{
+    if(a.fechaVencimiento<b.fechaVencimiento) return -1;
+    if(a.fechaVencimiento>b.fechaVencimiento) return 1;
+    return (orden[a.prioridad]||1)-(orden[b.prioridad]||1);
+  });
+  if(datos.length===0) return `<div style="text-align:center;padding:40px;color:var(--text2);font-size:13px">Sin actividades con los filtros seleccionados</div>`;
+  const hoy=new Date().toISOString().split('T')[0];
+  return datos.map(pen=>{
+    const e=PEN_ESTADOS[pen.estado]||PEN_ESTADOS.pendiente;
+    const pr=PEN_PRIORIDADES[pen.prioridad]||PEN_PRIORIDADES.media;
+    const asig=(pen.asignadoA||[]).join(', ')||'Sin asignar';
+    const vencida=pen.fechaVencimiento && pen.fechaVencimiento<hoy && pen.estado!=='completado';
+    return `<div style="background:${vencida?'#fef2f2':e.bg};border:1px solid ${vencida?'#fca5a5':e.border};border-left:4px solid ${vencida?'#dc2626':e.color};
+                        border-radius:var(--radius-sm);padding:10px 14px;margin-bottom:8px;
+                        display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+      <div style="flex:1;min-width:0">
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+          <span style="font-size:14px;font-weight:700;color:${vencida?'#dc2626':e.color}">${e.icon} ${pen.titulo}</span>
+          <span style="font-size:11px;background:${pr.bg};color:${pr.color};padding:1px 7px;border-radius:99px;font-weight:600">${pr.label}</span>
+          ${vencida?'<span style="font-size:11px;background:#fef2f2;color:#dc2626;padding:1px 7px;border-radius:99px;font-weight:700">⚠ Vencida</span>':''}
+        </div>
+        <div style="font-size:12px;color:var(--text2);margin-top:3px">
+          ${pen.fechaVencimiento?'📅 Vence: '+pen.fechaVencimiento+' ·':''} 👤 ${asig}
+          ${pen.descripcion?` · 📝 ${pen.descripcion.substring(0,60)}${pen.descripcion.length>60?'…':''}` : ''}
+        </div>
+      </div>
+      <div style="display:flex;gap:6px;flex-shrink:0;flex-wrap:wrap">
+        ${pen.estado!=='completado'?`<button onclick="penCambiarEstado('${pen.id}','completado')" class="btn btn-sm btn-green" style="font-size:11px">✓ Listo</button>`:''}
+        ${pen.estado==='pendiente'?`<button onclick="penCambiarEstado('${pen.id}','en_proceso')" class="btn btn-sm btn-blue" style="font-size:11px">▶ Iniciar</button>`:''}
+        <button onclick="penEditarPendiente('${pen.id}')" class="btn btn-sm btn-secondary" style="font-size:11px">✏️</button>
+        <button onclick="penEliminar('${pen.id}')" class="btn btn-sm" style="font-size:11px;background:#fee2e2;color:#dc2626;border:1px solid #fca5a5">✕</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function _penCalHTML(){
+  const v=_penCal.vista;
+  // Lista de usuarios disponibles para el filtro
+  const _usuariosDisp = (function(){
+    const todos=new Set();
+    pendientesDB.forEach(p=>(p.asignadoA||[]).forEach(u=>todos.add(u)));
+    return [...todos].sort();
+  })();
+  return `
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:10px">
+    <div>
+      <h2 style="font-size:16px;font-weight:700;color:var(--afimex-blue)">📌 Pendientes y Actividades</h2>
+      <div style="display:flex;gap:12px;margin-top:6px;flex-wrap:wrap">
+        ${Object.entries(PEN_ESTADOS).map(([k,e])=>`
+        <span style="display:flex;align-items:center;gap:5px;font-size:12px;color:var(--text2)">
+          <span style="width:14px;height:14px;border-radius:3px;background:${e.bg};border:2px solid ${e.border};display:inline-block"></span>
+          ${e.label}
+        </span>`).join('')}
+      </div>
+    </div>
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+      <button onclick="penNuevoPendiente()" class="btn btn-primary" style="font-size:13px">+ Nueva Actividad</button>
+    </div>
+  </div>
+
+  <!-- Filtros -->
+  <div style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;align-items:center">
+    <span style="font-size:12px;color:var(--text2);font-weight:500">Filtrar:</span>
+    ${['todos','pendiente','en_proceso','completado'].map(k=>{
+      const lbl=k==='todos'?'Todos':(PEN_ESTADOS[k]?.label||k);
+      const active=_penFiltroEstado===k;
+      return `<button onclick="_penFiltroEstado='${k}';_penRender()"
+        style="padding:4px 12px;border-radius:99px;border:1px solid ${active?'var(--afimex-blue)':'var(--border2)'};
+               font-size:12px;font-weight:${active?600:400};cursor:pointer;
+               background:${active?'var(--afimex-blue)':'white'};color:${active?'white':'var(--text2)'}">${lbl}</button>`;
+    }).join('')}
+    ${_usuariosDisp.length>0?`
+    <select onchange="_penFiltroUsuario=this.value;_penRender()"
+      style="font-size:12px;padding:4px 8px;border:1px solid var(--border2);border-radius:5px;cursor:pointer">
+      <option value="">👤 Todos los usuarios</option>
+      ${_usuariosDisp.map(u=>`<option value="${u}" ${_penFiltroUsuario===u?'selected':''}>${u}</option>`).join('')}
+    </select>`:''}
+  </div>
+
+  <div style="background:white;border:1px solid var(--border);border-radius:var(--radius);overflow:hidden">
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:12px 16px;border-bottom:1px solid var(--border)">
+      <div style="display:flex;gap:6px;align-items:center">
+        <button onclick="_penIrHoy()" style="padding:5px 14px;border:1px solid var(--border2);border-radius:5px;background:white;cursor:pointer;font-size:13px;font-weight:600">Hoy</button>
+        <button onclick="_penNavegar(-1)" style="padding:5px 10px;border:1px solid var(--border2);border-radius:5px;background:white;cursor:pointer;font-size:14px">&lt;</button>
+        <button onclick="_penNavegar(1)"  style="padding:5px 10px;border:1px solid var(--border2);border-radius:5px;background:white;cursor:pointer;font-size:14px">&gt;</button>
+      </div>
+      <div style="font-size:18px;font-weight:700;color:var(--afimex-blue)">${_penTituloNav()}</div>
+      <div style="display:flex;border:1px solid var(--border2);border-radius:5px;overflow:hidden">
+        ${['mes','semana','dia','lista'].map(vi=>`<button onclick="_penSetVista('${vi}')"
+          style="padding:6px 14px;border:none;font-size:12px;font-weight:600;cursor:pointer;
+                 background:${v===vi?'var(--afimex-blue)':'white'};
+                 color:${v===vi?'white':'var(--text2)'}">${vi==='mes'?'Mes':vi==='semana'?'Semana':vi==='dia'?'Día':'Lista'}</button>`).join('')}
+      </div>
+    </div>
+    ${v==='mes'?_penVistaMes():v==='semana'?_penVistaSemana():v==='dia'?_penVistaDia():`<div style="padding:16px">${_penListaHTML()}</div>`}
+  </div>`;
+}
+
+function _penAlertasHTML(){
+  const hoy=new Date(); hoy.setHours(0,0,0,0);
+  const en5=new Date(hoy); en5.setDate(en5.getDate()+5);
+  const hoyStr=hoy.toISOString().split('T')[0];
+  const en5Str=en5.toISOString().split('T')[0];
+
+  const proximas=pendientesDB.filter(p=>{
+    if(p.estado==='completado') return false;
+    return p.fechaVencimiento && p.fechaVencimiento>=hoyStr && p.fechaVencimiento<=en5Str;
+  }).sort((a,b)=>a.fechaVencimiento.localeCompare(b.fechaVencimiento));
+
+  const vencidas=pendientesDB.filter(p=>{
+    if(p.estado==='completado') return false;
+    return p.fechaVencimiento && p.fechaVencimiento<hoyStr;
+  });
+
+  const filas=[
+    ...vencidas.map(p=>{
+      const e=PEN_ESTADOS[p.estado]||PEN_ESTADOS.pendiente;
+      return `<div style="background:#fef2f2;border-left:3px solid #dc2626;border-radius:6px;padding:10px 12px;margin-bottom:8px">
+        <div style="font-size:12px;font-weight:700;color:#dc2626;margin-bottom:2px">⚠ Vencida</div>
+        <div style="font-size:13px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${p.titulo}">${p.titulo}</div>
+        <div style="font-size:11px;color:var(--text2);margin-top:2px">${e.label} · ${p.fechaVencimiento}</div>
+      </div>`;
+    }),
+    ...proximas.map(p=>{
+      const fin=new Date(p.fechaVencimiento+'T00:00:00');
+      const dr=Math.round((fin-hoy)/(1000*60*60*24));
+      const color=dr===0?'#dc2626':dr<=2?'#ea580c':'#d97706';
+      const bg=dr===0?'#fef2f2':dr<=2?'#fff7ed':'#fffbeb';
+      const etq=dr===0?'Vence hoy':dr===1?'Vence mañana':`Vence en ${dr} días`;
+      return `<div style="background:${bg};border-left:3px solid ${color};border-radius:6px;padding:10px 12px;margin-bottom:8px">
+        <div style="font-size:12px;font-weight:700;color:${color};margin-bottom:2px">${etq}</div>
+        <div style="font-size:13px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${p.titulo}">${p.titulo}</div>
+        <div style="font-size:11px;color:var(--text2);margin-top:2px">${p.fechaVencimiento}</div>
+      </div>`;
+    })
+  ].join('');
+
+  const total=proximas.length+vencidas.length;
+  return `<div style="width:220px;flex-shrink:0">
+    <div style="background:white;border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;position:sticky;top:16px">
+      <div style="background:var(--afimex-orange);padding:10px 14px;display:flex;align-items:center;gap:6px">
+        <span style="font-size:14px">🔔</span>
+        <span style="font-size:13px;font-weight:700;color:white">Alertas</span>
+        ${total>0?`<span style="background:white;color:var(--afimex-orange);font-size:11px;font-weight:700;padding:1px 7px;border-radius:99px;margin-left:auto">${total}</span>`:''}
+      </div>
+      <div style="padding:10px">
+        ${total===0
+          ? `<div style="text-align:center;padding:20px 10px;color:var(--text2);font-size:12px">
+               <div style="font-size:24px;margin-bottom:6px">✅</div>
+               Sin actividades urgentes
+             </div>`
+          : filas
+        }
+      </div>
+    </div>
+
+    <!-- Stats rápidos -->
+    <div style="background:white;border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;margin-top:12px">
+      <div style="background:var(--afimex-blue);padding:8px 14px">
+        <span style="font-size:12px;font-weight:700;color:white">📊 Resumen</span>
+      </div>
+      <div style="padding:10px;display:flex;flex-direction:column;gap:6px">
+        ${Object.entries(PEN_ESTADOS).map(([k,e])=>{
+          const n=pendientesDB.filter(p=>p.estado===k).length;
+          return `<div style="display:flex;justify-content:space-between;align-items:center">
+            <span style="font-size:12px;color:var(--text2)">${e.icon} ${e.label}</span>
+            <span style="font-size:13px;font-weight:700;color:${e.color}">${n}</span>
+          </div>`;
+        }).join('')}
+      </div>
+    </div>
+  </div>`;
+}
+
+function _penRender(){
+  const r=document.getElementById('pen-root');
+  if(!r) return;
+  r.innerHTML=`<div style="display:flex;gap:16px;align-items:flex-start">
+    <div style="flex:1;min-width:0">${_penCalHTML()}</div>
+    ${_penAlertasHTML()}
+  </div>`;
+}
+
+function pendientesHTML(){
+  return `<div class="content" style="padding:20px" id="pen-root">
+    <div style="display:flex;gap:16px;align-items:flex-start">
+      <div style="flex:1;min-width:0">${_penCalHTML()}</div>
+      ${_penAlertasHTML()}
+    </div>
+  </div>`;
+}
+
+// ── Modal: Nueva / Editar actividad ──────────────────────────────
+function penNuevoPendiente(fechaDefault){
+  const hoy=fechaDefault||(new Date().toISOString().split('T')[0]);
+  _penModalAbrir({id:null,titulo:'',descripcion:'',estado:'pendiente',prioridad:'media',fechaVencimiento:hoy,asignadoA:[]});
+}
+function penEditarPendiente(id){
+  const p=pendientesDB.find(x=>x.id===id);
+  if(!p) return;
+  _penModalAbrir({...p, asignadoA:[...(p.asignadoA||[])]});
+}
+
+function _penModalAbrir(datos){
+  // Obtener usuarios disponibles del sistema
+  const usuariosList = (function(){
+    try{
+      const us=JSON.parse(localStorage.getItem('afimex-usuarios')||'[]');
+      return us.map(u=>u.nombre||u.usuario).filter(Boolean).sort();
+    }catch(e){ return []; }
+  })();
+
+  document.getElementById('pen-modal-overlay')?.remove();
+  const overlay=document.createElement('div');
+  overlay.className='modal-overlay';
+  overlay.id='pen-modal-overlay';
+  const esEdicion=!!datos.id;
+  const asigSet=new Set(datos.asignadoA||[]);
+
+  overlay.innerHTML=`
+  <div class="modal-box" style="max-width:500px;width:95vw;max-height:90vh;overflow-y:auto">
+    <div class="modal-title">${esEdicion?'✏️ Editar Actividad':'📌 Nueva Actividad'}</div>
+    <div style="display:flex;flex-direction:column;gap:12px">
+
+      <div class="form-group">
+        <label>Título <span style="color:#dc2626">*</span></label>
+        <input id="pen-titulo" type="text" value="${(datos.titulo||'').replace(/"/g,'&quot;')}" placeholder="Ej: Revisar expedientes pendientes"
+          style="width:100%;padding:8px 10px;border:1.5px solid var(--border);border-radius:var(--radius-sm);font-size:13px;font-family:inherit">
+      </div>
+
+      <div class="form-group">
+        <label>Descripción <span style="color:var(--text2);font-weight:400">(opcional)</span></label>
+        <textarea id="pen-desc" rows="2" placeholder="Detalle de la actividad..."
+          style="width:100%;padding:8px 10px;border:1.5px solid var(--border);border-radius:var(--radius-sm);font-size:13px;font-family:inherit;resize:vertical">${datos.descripcion||''}</textarea>
+      </div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+        <div class="form-group">
+          <label>Fecha de vencimiento</label>
+          <input id="pen-fecha" type="date" value="${datos.fechaVencimiento||''}"
+            style="width:100%;padding:8px 10px;border:1.5px solid var(--border);border-radius:var(--radius-sm);font-size:13px;font-family:inherit">
+        </div>
+        <div class="form-group">
+          <label>Prioridad</label>
+          <select id="pen-prioridad" style="width:100%;padding:8px 10px;border:1.5px solid var(--border);border-radius:var(--radius-sm);font-size:13px;font-family:inherit">
+            ${Object.entries(PEN_PRIORIDADES).map(([k,p])=>`<option value="${k}" ${datos.prioridad===k?'selected':''}>${p.label}</option>`).join('')}
+          </select>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label>Estado</label>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          ${Object.entries(PEN_ESTADOS).map(([k,e])=>`
+          <label style="display:flex;align-items:center;gap:5px;padding:5px 12px;border:1.5px solid ${datos.estado===k?e.border:'var(--border)'};
+                        background:${datos.estado===k?e.bg:'white'};border-radius:var(--radius-sm);cursor:pointer;font-size:12px;font-weight:600;color:${datos.estado===k?e.color:'var(--text2)'}">
+            <input type="radio" name="pen-estado" value="${k}" ${datos.estado===k?'checked':''} style="display:none">
+            ${e.icon} ${e.label}
+          </label>`).join('')}
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label>Asignar a <span style="color:var(--text2);font-weight:400">(selecciona uno o varios)</span></label>
+        ${usuariosList.length>0
+          ? `<div style="border:1.5px solid var(--border);border-radius:var(--radius-sm);max-height:130px;overflow-y:auto;padding:6px">
+              ${usuariosList.map(u=>`
+              <label style="display:flex;align-items:center;gap:6px;padding:4px 6px;cursor:pointer;font-size:13px;border-radius:4px;transition:background .1s"
+                     onmouseover="this.style.background='var(--bg2)'" onmouseout="this.style.background='white'">
+                <input type="checkbox" class="pen-asig-cb" value="${u}" ${asigSet.has(u)?'checked':''} style="cursor:pointer;accent-color:var(--afimex-blue)">
+                ${u}
+              </label>`).join('')}
+             </div>`
+          : `<div style="font-size:12px;color:var(--text2);padding:8px;background:var(--bg2);border-radius:var(--radius-sm)">
+               No hay usuarios registrados. Puedes escribir uno:
+             </div>`
+        }
+        <input id="pen-asig-otro" type="text" placeholder="O escribe un nombre adicional..."
+          style="margin-top:6px;width:100%;padding:6px 10px;border:1.5px solid var(--border);border-radius:var(--radius-sm);font-size:13px;font-family:inherit">
+      </div>
+
+    </div>
+    <div id="pen-modal-error" style="color:#dc2626;font-size:12px;margin-top:8px;display:none"></div>
+    <div class="btn-row" style="margin-top:16px">
+      ${esEdicion?`<button class="btn btn-danger btn-sm" onclick="penEliminar('${datos.id}');document.getElementById('pen-modal-overlay').remove()">🗑 Eliminar</button><div style="flex:1"></div>`:''}
+      <button class="btn btn-secondary" onclick="document.getElementById('pen-modal-overlay').remove()">Cancelar</button>
+      <button class="btn btn-primary" onclick="penGuardar('${datos.id||''}')">💾 Guardar</button>
+    </div>
+  </div>`;
+  document.body.appendChild(overlay);
+
+  // Estilos radio buttons interactivos
+  overlay.querySelectorAll('input[name="pen-estado"]').forEach(r=>{
+    r.addEventListener('change',function(){
+      overlay.querySelectorAll('label:has(input[name="pen-estado"])').forEach(l=>{
+        const v=l.querySelector('input').value;
+        const e=PEN_ESTADOS[v];
+        const checked=l.querySelector('input').checked;
+        l.style.borderColor=checked?e.border:'var(--border)';
+        l.style.background=checked?e.bg:'white';
+        l.style.color=checked?e.color:'var(--text2)';
+      });
+    });
+  });
+}
+
+function penGuardar(idExistente){
+  const titulo=(document.getElementById('pen-titulo')?.value||'').trim();
+  const desc=(document.getElementById('pen-desc')?.value||'').trim();
+  const fecha=document.getElementById('pen-fecha')?.value||'';
+  const prioridad=document.getElementById('pen-prioridad')?.value||'media';
+  const estado=(document.querySelector('input[name="pen-estado"]:checked')?.value)||'pendiente';
+  const errEl=document.getElementById('pen-modal-error');
+
+  if(!titulo){ errEl.textContent='Ingresa un título para la actividad'; errEl.style.display='block'; return; }
+
+  // Asignados: checkboxes + campo libre
+  const asig=[];
+  document.querySelectorAll('.pen-asig-cb:checked').forEach(cb=>asig.push(cb.value));
+  const otro=(document.getElementById('pen-asig-otro')?.value||'').trim();
+  if(otro && !asig.includes(otro)) asig.push(otro);
+
+  const obj={titulo,descripcion:desc,estado,prioridad,fechaVencimiento:fecha,asignadoA:asig,
+    id:idExistente||('pen_'+Date.now()),
+    creadoPor:(currentUser&&(currentUser.nombre||currentUser.usuario))||'',
+    creado:idExistente?undefined:new Date().toLocaleDateString('es-MX'),
+    modificado:new Date().toLocaleDateString('es-MX')
+  };
+
+  if(idExistente){
+    const idx=pendientesDB.findIndex(p=>p.id===idExistente);
+    if(idx>-1){ obj.creado=pendientesDB[idx].creado; pendientesDB[idx]=obj; }
+    else pendientesDB.push(obj);
+  } else {
+    pendientesDB.push(obj);
+  }
+
+  savePendientes();
+  document.getElementById('pen-modal-overlay')?.remove();
+  _penRender();
+  showToast('✓ Actividad guardada');
+}
+
+function penEliminar(id){
+  if(!confirm('¿Eliminar esta actividad? Esta acción no se puede deshacer.')) return;
+  pendientesDB=pendientesDB.filter(p=>p.id!==id);
+  savePendientes();
+  _penRender();
+  showToast('Actividad eliminada');
+}
+
+function penCambiarEstado(id, nuevoEstado){
+  const idx=pendientesDB.findIndex(p=>p.id===id);
+  if(idx<0) return;
+  pendientesDB[idx].estado=nuevoEstado;
+  pendientesDB[idx].modificado=new Date().toLocaleDateString('es-MX');
+  savePendientes();
+  _penRender();
+  showToast('✓ Estado actualizado: '+(PEN_ESTADOS[nuevoEstado]?.label||nuevoEstado));
+}
+
+function penVerDetalle(id){
+  const p=pendientesDB.find(x=>x.id===id);
+  if(!p) return;
+  const e=PEN_ESTADOS[p.estado]||PEN_ESTADOS.pendiente;
+  const pr=PEN_PRIORIDADES[p.prioridad]||PEN_PRIORIDADES.media;
+  const asig=(p.asignadoA||[]).join(', ')||'Sin asignar';
+  const overlay=document.createElement('div');
+  overlay.className='modal-overlay';
+  overlay.id='pen-detalle-overlay';
+  overlay.innerHTML=`
+  <div class="modal-box" style="max-width:420px;width:95vw">
+    <div style="background:${e.bg};border-left:5px solid ${e.color};border-radius:var(--radius-sm);padding:14px 16px;margin-bottom:14px">
+      <div style="font-size:15px;font-weight:700;color:${e.color}">${e.icon} ${p.titulo}</div>
+      <div style="font-size:12px;color:var(--text2);margin-top:4px">${e.label} — Prioridad: <span style="color:${pr.color};font-weight:600">${pr.label}</span></div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:13px;margin-bottom:14px">
+      <div><span style="font-size:11px;color:var(--text2);display:block">Asignado a</span><strong>${asig}</strong></div>
+      <div><span style="font-size:11px;color:var(--text2);display:block">Vencimiento</span><strong>${p.fechaVencimiento||'Sin fecha'}</strong></div>
+      <div><span style="font-size:11px;color:var(--text2);display:block">Creado por</span><strong>${p.creadoPor||'—'}</strong></div>
+      <div><span style="font-size:11px;color:var(--text2);display:block">Creado</span><strong>${p.creado||'—'}</strong></div>
+      ${p.descripcion?`<div style="grid-column:1/-1"><span style="font-size:11px;color:var(--text2);display:block">Descripción</span><strong>${p.descripcion}</strong></div>`:''}
+    </div>
+    <div class="btn-row">
+      <button class="btn btn-danger btn-sm" onclick="penEliminar('${p.id}');document.getElementById('pen-detalle-overlay').remove()">🗑 Eliminar</button>
+      <div style="flex:1"></div>
+      <button class="btn btn-secondary" onclick="document.getElementById('pen-detalle-overlay').remove()">Cerrar</button>
+      <button class="btn btn-primary" onclick="document.getElementById('pen-detalle-overlay').remove();penEditarPendiente('${p.id}')">✏️ Editar</button>
+    </div>
+  </div>`;
+  document.body.appendChild(overlay);
 }
 
 // ─── INIT ─────────────────────────────────────────────────────
