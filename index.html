@@ -166,7 +166,7 @@ input.field-ok { border-color: #16a34a; background: #f0fdf4; }
     <div style="display:flex;align-items:center;gap:12px">
       <div>
         <div class="topbar-title">AFIMEX PEOPLE</div>
-        <div class="topbar-sub">V 11.2.10 | Recursos Humanos</div>
+        <div class="topbar-sub">V 11.2.11 | Recursos Humanos</div>
       </div>
     </div>
     <div style="position:absolute;left:50%;transform:translateX(-50%)">
@@ -8596,11 +8596,8 @@ function penAgregarComentario(id){
         {folio:'CED-1.26',nombre:'JUAN JOSE ARCEO BUSTOS',oficina:'CEDIS',fecha:'2026-01-01'},
       ];
       localStorage.setItem('afimex-folios-manual', JSON.stringify(_foliosHist));
-      // Actualizar consecutivos para que el siguiente folio sea correcto
+      // Recargar foliosData desde localStorage (ya actualizado con el historial)
       const _fData = JSON.parse(localStorage.getItem('afimex-folios')||'{}');
-      const _consec = {TRC:3,TAM:2,SLW:1,SLP:3,RH:1,POR:2,MTY:11,LOV:1,DEL:1,CUU:1,COM:1,CJS:3,CED:1};
-      Object.entries(_consec).forEach(([iata,n])=>{ if(!_fData[iata]||_fData[iata]<n) _fData[iata]=n; });
-      localStorage.setItem('afimex-folios', JSON.stringify(_fData));
       foliosData = _fData;
     }
   }catch(e){}
@@ -8611,7 +8608,7 @@ function penAgregarComentario(id){
   // ── Auto-sync en background cada 10 minutos ──────────────────
   // Descarga solo datos operativos silenciosamente y aplica cambios si hay novedades
   if(tieneGSheets()){
-    const AUTOSYNC_HOJAS = ['Expedientes','Seguimiento','Incapacidades','Pendientes','Finiquitos','SV_Folios','Folios_Manual'];
+    const AUTOSYNC_HOJAS = ['Expedientes','Seguimiento','Incapacidades','Pendientes','Finiquitos','SV_Folios','Folios_Manual','Folios'];
     async function autoSyncBackground(){
       try{
         let huboCambios = false;
@@ -8640,6 +8637,11 @@ function penAgregarComentario(id){
             localStorage.setItem('afimex-sv-folios',JSON.stringify(datos));
           } else if(hoja==='Folios_Manual' && Array.isArray(datos) && datos.length>0){
             localStorage.setItem('afimex-folios-manual',JSON.stringify(datos));
+          } else if(hoja==='Folios' && datos && typeof datos==='object' && Object.keys(datos).length>0){
+            Object.entries(datos).forEach(([iata,n])=>{
+              if(!foliosData[iata] || n > foliosData[iata]) foliosData[iata] = n;
+            });
+            localStorage.setItem('afimex-folios', JSON.stringify(foliosData));
           }
         }
         if(huboCambios){
