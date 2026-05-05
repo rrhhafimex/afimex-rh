@@ -166,7 +166,7 @@ input.field-ok { border-color: #16a34a; background: #f0fdf4; }
     <div style="display:flex;align-items:center;gap:12px">
       <div>
         <div class="topbar-title">AFIMEX PEOPLE</div>
-        <div class="topbar-sub">V 11.2.13 | Recursos Humanos</div>
+        <div class="topbar-sub">V 11.2.15 | Recursos Humanos</div>
       </div>
     </div>
     <div style="position:absolute;left:50%;transform:translateX(-50%)">
@@ -323,12 +323,19 @@ var OFICINAS_DIR = {
 const TABS_GEN = ['altas','baja','seguimiento','docs','folios','pendientes'];
 const TABS_ADM = ['altas','baja','seguimiento','base','docs','finiquitos','incapacidades','usuarios','config','pendientes'];
 const TAB_LABELS = {altas:'📋 Alta de Expediente',baja:'🚪 Solicitud de Baja',seguimiento:'📊 Seguimiento de Ingresos',folios:'📁 Folios de Salida',base:'🗄️ Base de Datos',docs:'🖨️ Impresión de Documentos',usuarios:'👥 Usuarios',config:'⚙️ Catálogo',finiquitos:'💰 Finiquitos',incapacidades:'🏥 Incapacidades',pendientes:'📌 Pendientes'};
+function _penTabLabel(){
+  const n=_penCountNuevos();
+  return n>0
+    ? '📌 Pendientes <span style="background:#dc2626;color:white;border-radius:999px;font-size:10px;font-weight:700;padding:1px 6px;margin-left:4px;vertical-align:middle">'+n+'</span>'
+    : '📌 Pendientes';
+}
 
 // ─── STATE ────────────────────────────────────────────────────────────────────
 let currentTab='altas', currentType='semanal', isAdmin=false;
 let currentRole='generalista'; // 'generalista' | 'admin' | 'reclutador'
 let currentUser=null; // {nombre, usuario, rol} del usuario logueado
 let db=[], seguimientos=[], foliosData={}, bajaColaborador=null, finiquitosDB=[];
+let _foliosOrden={col:'folio',dir:'desc'};
 let nomInput='', nssInput='';
 const today=new Date(); today.setHours(0,0,0,0);
 const anioCorto=String(new Date().getFullYear()).slice(-2);
@@ -855,6 +862,40 @@ function generarFolio(oficina){const iata=IATA_MAP[oficina]||oficina;if(!foliosD
 function previsualizarFolio(oficina){const iata=IATA_MAP[oficina]||oficina;return`${iata}-${(foliosData[iata]||0)+1}.${anioCorto}`;}
 
 // ── Editar consecutivo de una sucursal ──────────────────────────
+function foliosOrdenar(col){
+  if(_foliosOrden.col===col){
+    _foliosOrden.dir=_foliosOrden.dir==='asc'?'desc':'asc';
+  } else {
+    _foliosOrden={col,dir:'asc'};
+  }
+  render();
+}
+
+async function folioEditarHistorial(tipo, ref, folioActual){
+  const nuevo = prompt(`Editar folio:\nValor actual: ${folioActual}\n\nIngresa el nuevo folio (ej: MTY-13.26):`, folioActual);
+  if(nuevo===null||nuevo.trim()===''||nuevo.trim()===folioActual) return;
+  const folioNuevo = nuevo.trim();
+  if(tipo==='db'){
+    if(db[ref]){ db[ref].folio=folioNuevo; await saveDB(); }
+  } else if(tipo==='sv'){
+    try{
+      const lista=JSON.parse(localStorage.getItem('afimex-sv-folios')||'[]');
+      if(lista[ref]) lista[ref].folio=folioNuevo;
+      localStorage.setItem('afimex-sv-folios',JSON.stringify(lista));
+      if(tieneGSheets()) jsonpSend('SV_Folios', lista);
+    }catch(e){}
+  } else if(tipo==='man'){
+    try{
+      const lista=JSON.parse(localStorage.getItem('afimex-folios-manual')||'[]');
+      if(lista[ref]) lista[ref].folio=folioNuevo;
+      localStorage.setItem('afimex-folios-manual',JSON.stringify(lista));
+      if(tieneGSheets()) jsonpSend('Folios_Manual', lista);
+    }catch(e){}
+  }
+  render();
+  showToast(`✓ Folio actualizado a ${folioNuevo}`);
+}
+
 function folioEditar(iata, numActual){
   const nuevo = prompt(`Corregir consecutivo de ${iata}\nValor actual: ${numActual}\n\nIngresa el nuevo número (solo el número, ej: 15):`, numActual);
   if(nuevo === null) return; // canceló
@@ -940,7 +981,7 @@ function renderNav(){
   else if(currentRole==='gerencia')   tabs = TABS_GER;
   else                                tabs = TABS_GEN;
 
-  document.getElementById('nav-links').innerHTML=tabs.map(t=>`<button class="nav-btn ${currentTab===t?'active':''}" onclick="showTab('${t}')">${TAB_LABELS[t]}</button>`).join('');
+  document.getElementById('nav-links').innerHTML=tabs.map(t=>`<button class="nav-btn ${currentTab===t?'active':''}" onclick="showTab('${t}')">${t==='pendientes'?_penTabLabel():TAB_LABELS[t]}</button>`).join('');
 
   const syncBtn = tieneGSheets()
     ? `${currentRole === 'admin' ? `<button class="btn-role" onclick="subirTodoANube()" title="Subir TODO a Google Sheets (fusiona con Drive primero)" style="background:rgba(255,255,255,.12);margin-right:4px">⬆ Subir</button>` : ''}<button class="btn-role" onclick="sincronizarDesdeGSheets()" title="Descargar todos los datos de Google Sheets" style="background:rgba(255,255,255,.15);margin-right:6px">⬇ Bajar</button>`
@@ -2470,8 +2511,20 @@ function foliosHTML(){
     }));
   }catch(e){}
   // ── Unir todo y ordenar por folio desc ───────────────────────
-  const historial=[...histDB,...histSV,...histMan]
-    .sort((a,b)=>b.folio.localeCompare(a.folio));
+  const historial=[...histDB,...histSV,...histMan];
+  const historialOrd=[...historial].sort((a,b)=>{
+    const col=_foliosOrden.col||'folio';
+    const dir=_foliosOrden.dir==='asc'?1:-1;
+    const va=a[col]||'', vb=b[col]||'';
+    if(col==='folio'){
+      // Ordenar folios numéricamente (MTY-12.26 > MTY-2.26)
+      const numA=parseInt((va.match(/-(\d+)\./)||[])[1]||0);
+      const numB=parseInt((vb.match(/-(\d+)\./)||[])[1]||0);
+      const iataA=va.split('-')[0]||'', iataB=vb.split('-')[0]||'';
+      return iataA!==iataB?iataA.localeCompare(iataB)*dir:(numA-numB)*dir;
+    }
+    return va.localeCompare(vb)*dir;
+  });
 
   return`
 <!-- CONSECUTIVOS -->
@@ -2507,16 +2560,24 @@ ${historial.length===0
   :`<div style="overflow-x:auto">
   <table class="folios-table">
   <thead><tr>
-    <th>Folio</th><th>Colaborador</th><th>Puesto / Tipo</th>
-    <th>Oficina</th><th>Fecha baja</th><th style="width:40px"></th>
+    ${['folio','nombre','puesto','oficina','fecha'].map((col,i)=>{
+      const labels=['Folio','Colaborador','Puesto / Tipo','Oficina','Fecha baja'];
+      const activo=_foliosOrden.col===col;
+      const flecha=activo?(_foliosOrden.dir==='asc'?' ▲':' ▼'):'';
+      return`<th onclick="foliosOrdenar('${col}')" style="cursor:pointer;user-select:none${activo?';color:var(--afimex-orange)':''}">${labels[i]}${flecha}</th>`;
+    }).join('')}
+    <th style="width:70px"></th>
   </tr></thead>
-  <tbody>${historial.map(h=>`<tr>
+  <tbody>${historialOrd.map(h=>`<tr>
     <td><span class="folio-badge">${h.folio}</span></td>
     <td style="font-size:12px;font-weight:600">${h.nombre}</td>
     <td style="font-size:12px">${h.puesto}</td>
     <td style="font-size:12px">${h.oficina}</td>
     <td style="font-size:12px">${h.fecha}</td>
-    <td style="text-align:center">
+    <td style="text-align:center;display:flex;gap:4px;justify-content:center">
+      <button onclick="folioEditarHistorial('${h.tipo}',${h.ref},'${h.folio}')"
+        style="background:#e0e7ff;color:#3730a3;border:none;border-radius:4px;padding:3px 7px;cursor:pointer;font-size:12px;font-weight:700"
+        title="Editar">✏️</button>
       <button onclick="folioEliminarDeHistorial('${h.tipo}',${h.ref})"
         style="background:#fee2e2;color:#dc2626;border:none;border-radius:4px;padding:3px 7px;cursor:pointer;font-size:12px;font-weight:700"
         title="Eliminar">✕</button>
@@ -3030,6 +3091,26 @@ async function guardarBaja(){
   let folio='MANUAL';
   if(!_isManual&&bajaColaborador){
     const idx=db.indexOf(bajaColaborador);
+    // Descargar folios actualizados desde GSheets antes de generar el siguiente
+    if(tieneGSheets()){
+      try{
+        const fData = await new Promise((res,rej)=>{
+          const cb='_cb_folio_'+Date.now();
+          const sc=document.createElement('script');
+          sc.src=GS_URL+'?action=getData&sheets=Folios&callback='+cb;
+          window[cb]=d=>{delete window[cb];sc.remove();res(d);};
+          sc.onerror=()=>{delete window[cb];sc.remove();rej();};
+          setTimeout(()=>{delete window[cb];sc.remove();rej();},8000);
+          document.head.appendChild(sc);
+        });
+        if(fData&&fData.Folios&&typeof fData.Folios==='object'){
+          Object.entries(fData.Folios).forEach(([iata,n])=>{
+            if(!foliosData[iata]||n>foliosData[iata]) foliosData[iata]=n;
+          });
+          localStorage.setItem('afimex-folios',JSON.stringify(foliosData));
+        }
+      }catch(e){}
+    }
     folio=generarFolio(bajaColaborador.oficina);
     db[idx].estatus='baja';db[idx].fechaBaja=fechaBaja;db[idx].folio=folio;
     if(!seguimientos[idx])seguimientos[idx]={s1:false,s2:false,s3:false,comentario:'',estatus:'activo'};
@@ -7868,6 +7949,20 @@ function _incCargarDeRes(res){
 // ─── PENDIENTES ───────────────────────────────────────────────────────────────
 var pendientesDB = [];
 try{ const _vp=localStorage.getItem('afimex-pendientes'); if(_vp) pendientesDB=JSON.parse(_vp); }catch(e){}
+// IDs de pendientes ya vistos por el usuario actual (para badge)
+function _penVistosKey(){ return 'afimex-pen-vistos-'+(currentUser&&(currentUser.usuario||currentUser.nombre)||'x'); }
+function _penGetVistos(){ try{ return new Set(JSON.parse(localStorage.getItem(_penVistosKey())||'[]')); }catch(e){ return new Set(); } }
+function _penSetVistos(s){ try{ localStorage.setItem(_penVistosKey(), JSON.stringify([...s])); }catch(e){} }
+function _penCountNuevos(){
+  if(!currentUser) return 0;
+  const nombreUser = currentUser.nombre||currentUser.usuario||'';
+  const vistos = _penGetVistos();
+  return pendientesDB.filter(p=>
+    p.estado!=='completado' &&
+    (p.asignadoA||[]).some(a=>a.toLowerCase()===nombreUser.toLowerCase()) &&
+    !vistos.has(p.id)
+  ).length;
+}
 
 function savePendientes(){
   localStorage.setItem('afimex-pendientes', JSON.stringify(pendientesDB));
@@ -7875,6 +7970,39 @@ function savePendientes(){
 }
 
 // Estado del módulo Pendientes
+async function sincronizarPendientesAhora(){
+  const btn = document.getElementById('btn-sync-pen');
+  if(btn){ btn.disabled=true; btn.textContent='⏳ Sincronizando...'; }
+  try{
+    // 1. Subir pendientes locales
+    if(tieneGSheets()) await jsonpSend('Pendientes', pendientesDB);
+    // 2. Descargar pendientes de la nube y fusionar
+    if(tieneGSheets()){
+      const remoto = await new Promise((res,rej)=>{
+        const cb='_cb_pen_'+Date.now();
+        const sc=document.createElement('script');
+        sc.src=GS_URL+'?action=getData&sheets=Pendientes&callback='+cb;
+        window[cb]=d=>{delete window[cb];sc.remove();res(d);};
+        sc.onerror=()=>{delete window[cb];sc.remove();rej();};
+        setTimeout(()=>{delete window[cb];sc.remove();rej();},10000);
+        document.head.appendChild(sc);
+      });
+      if(remoto&&Array.isArray(remoto.Pendientes)&&remoto.Pendientes.length>0){
+        // Fusionar: los remotos prevalecen por ID, agregar nuevos que no existen local
+        const localMap = new Map(pendientesDB.map(p=>[p.id,p]));
+        remoto.Pendientes.forEach(p=>{ if(p.id) localMap.set(p.id,p); });
+        pendientesDB = [...localMap.values()];
+        localStorage.setItem('afimex-pendientes', JSON.stringify(pendientesDB));
+      }
+    }
+    renderNav(); render();
+    showToast('✓ Pendientes actualizados');
+  }catch(e){
+    showToast('Error al sincronizar pendientes','#dc2626');
+  }
+  if(btn){ btn.disabled=false; btn.innerHTML='🔄 Actualizar pendientes'; }
+}
+
 var _penCal = {
   anio: new Date().getFullYear(),
   mes:  new Date().getMonth(),
@@ -8263,7 +8391,22 @@ function _penRender(){
 }
 
 function pendientesHTML(){
+  // Marcar todos los pendientes asignados al usuario como vistos
+  if(currentUser){
+    const nombreUser=currentUser.nombre||currentUser.usuario||'';
+    const vistos=_penGetVistos();
+    pendientesDB.forEach(p=>{
+      if((p.asignadoA||[]).some(a=>a.toLowerCase()===nombreUser.toLowerCase())) vistos.add(p.id);
+    });
+    _penSetVistos(vistos);
+  }
   return `<div class="content" style="padding:20px" id="pen-root">
+    <div style="display:flex;justify-content:flex-end;margin-bottom:10px">
+      <button onclick="sincronizarPendientesAhora()" id="btn-sync-pen"
+        style="background:#e0e7ff;color:#3730a3;border:none;border-radius:var(--radius-sm);padding:7px 16px;cursor:pointer;font-size:13px;font-weight:600;display:flex;align-items:center;gap:6px">
+        🔄 Actualizar pendientes
+      </button>
+    </div>
     <div style="display:flex;gap:16px;align-items:flex-start">
       <div style="flex:1;min-width:0">${_penCalHTML()}</div>
       ${_penAlertasHTML()}
