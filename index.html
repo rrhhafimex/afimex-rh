@@ -166,7 +166,7 @@ input.field-ok { border-color: #16a34a; background: #f0fdf4; }
     <div style="display:flex;align-items:center;gap:12px">
       <div>
         <div class="topbar-title">AFIMEX PEOPLE</div>
-        <div class="topbar-sub">V 11.2.11 | Recursos Humanos</div>
+        <div class="topbar-sub">V 11.2.13 | Recursos Humanos</div>
       </div>
     </div>
     <div style="position:absolute;left:50%;transform:translateX(-50%)">
@@ -1231,7 +1231,7 @@ function printAlta(r){
 
   // Buscar datos de nómina para mostrar en el alta
   let periodo = (r.tipo==='semanal'||r.tipo==='temporal') ? 'SEMANA' : 'QUINCENA';
-  const nomData = r.puesto && periodo ? buscarNomina(r.puesto, periodo) : null;
+  const nomData = r.puesto && periodo ? buscarNomina(r.puesto, periodo, r.oficina) : null;
   const fmtMX = n => n!=null ? '$'+Number(n).toLocaleString('es-MX',{minimumFractionDigits:2,maximumFractionDigits:2}) : '—';
 
   const field=(lbl,val,cls='')=>`<div class="field ${cls}"><div class="lbl">${lbl}</div><div class="val">${val||'—'}</div></div>`;
@@ -3312,7 +3312,7 @@ let nomSelOficina = '', nomSelPuesto = '', nomSelPeriodo = '';
 function nominasHTML() {
   const puestosOficina = nomSelOficina ? (PUESTOS_POR_OFICINA[nomSelOficina] || []) : [];
   const periodo = nomSelPeriodo || '';
-  const nomData = nomSelPuesto && periodo ? buscarNomina(nomSelPuesto, periodo) : null;
+  const nomData = nomSelPuesto && periodo ? buscarNomina(nomSelPuesto, periodo, nomSelOficina) : null;
 
   const campoNom = (lbl, val, highlight) => `
     <div style="border:1px solid ${highlight ? 'var(--afimex-orange)' : 'var(--border)'};border-radius:var(--radius-sm);overflow:hidden;">
@@ -3404,7 +3404,7 @@ function nominasHTML() {
 }
 
 function printNomina(oficina, puesto, periodo) {
-  var d = buscarNomina(puesto, periodo);
+  var d = buscarNomina(puesto, periodo, oficina);
   if (!d) { showToast('Sin datos de nomina para este puesto/periodo', '#dc2626'); return; }
   var fmtMX = function(n) {
     return n != null ? '$' + Number(n).toLocaleString('es-MX', {minimumFractionDigits:2, maximumFractionDigits:2}) : '&#8212;';
