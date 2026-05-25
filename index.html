@@ -166,7 +166,7 @@ input.field-ok { border-color: #16a34a; background: #f0fdf4; }
     <div style="display:flex;align-items:center;gap:12px">
       <div>
         <div class="topbar-title">AFIMEX PEOPLE</div>
-        <div class="topbar-sub">V 11.3.14 | Recursos Humanos</div>
+        <div class="topbar-sub">V 11.3.15 | Recursos Humanos</div>
       </div>
     </div>
     <div style="position:absolute;left:50%;transform:translateX(-50%)">
@@ -191,7 +191,7 @@ const ADMIN_PASS = '1006';
 const GENERALISTA_PASS = 'rh2024';
 const TABS_REC = ['altas','seguimiento','docs','pendientes']; // Pestañas reclutador
 const TABS_NOM = ['baja','finiquitos','incapacidades','pendientes']; // Pestañas nóminas
-const TABS_GER = ['altas','baja','seguimiento','base','docs','folios','incapacidades','pendientes']; // Pestañas gerencia
+const TABS_GER = ['altas','baja','seguimiento','base','docs','folios','incapacidades','plantilla','pendientes']; // Pestañas gerencia
 // ─── CATÁLOGO DE SALARIOS ────────────────────────────────────────────────────
 var DATA_SALARIOS = [
   { sd: 316,  sbc: 331.58, descripcion: "Salario Base Zona A" },
@@ -9473,7 +9473,10 @@ function plantillaHTML(){
 </div>
 <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:10px">
   <div style="font-size:14px;font-weight:600;color:var(--text)">Plantilla por Oficina</div>
-  <button class="btn btn-primary btn-sm" onclick="plantillaAbrirNuevaOficina()">+ Agregar oficina</button>
+  <div style="display:flex;gap:8px">
+    <button class="btn btn-sm" style="background:#f0fdf4;border:1px solid #bbf7d0;color:#16a34a;font-weight:600" onclick="plantillaDescargarExcel()">⬇ Descargar Excel</button>
+    ${isAdmin?`<button class="btn btn-primary btn-sm" onclick="plantillaAbrirNuevaOficina()">+ Agregar oficina</button>`:''}
+  </div>
 </div>
 ${OFICINAS.length===0?'<div class="empty-state">No hay oficinas configuradas</div>':
   `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px">
@@ -9494,7 +9497,7 @@ ${OFICINAS.length===0?'<div class="empty-state">No hay oficinas configuradas</di
         <div style="font-size:13px;font-weight:700;color:var(--afimex-blue)">${of}</div>
         ${tieneConf
           ? `<span style="font-size:11px;padding:2px 8px;border-radius:99px;background:${color}20;color:${color};font-weight:600">${pct}%</span>`
-          : `<button class="btn btn-sm" style="font-size:11px;padding:2px 8px;background:var(--afimex-orange-light);color:var(--afimex-orange);border:1px solid var(--afimex-orange)" onclick="event.stopPropagation();plantillaAbrirConfigOficina('${of.replace(/'/g,"\\'")}')">Configurar</button>`
+          : isAdmin?`<button class="btn btn-sm" style="font-size:11px;padding:2px 8px;background:var(--afimex-orange-light);color:var(--afimex-orange);border:1px solid var(--afimex-orange)" onclick="event.stopPropagation();plantillaAbrirConfigOficina('${of.replace(/'/g,"\\'")}')">Configurar</button>`:''
         }
       </div>
       ${tieneConf?`
@@ -9506,8 +9509,8 @@ ${OFICINAS.length===0?'<div class="empty-state">No hay oficinas configuradas</di
         <span style="color:${color};font-weight:600">${ocupOf}/${cuposOf} — ${dispOf} libre${dispOf!==1?'s':''}</span>
       </div>
       <div style="margin-top:8px;display:flex;gap:6px">
-        <button class="btn btn-sm" style="font-size:11px;flex:1;background:var(--afimex-blue-light);color:var(--afimex-blue);border:1px solid #bfdbfe" onclick="event.stopPropagation();plantillaAbrirConfigOficina('${of.replace(/'/g,"\\'")}')">⚙ Cupos</button>
-        <button class="btn btn-sm" style="font-size:11px;flex:1;background:#f0fdf4;color:#16a34a;border:1px solid #bbf7d0" onclick="event.stopPropagation();window._plantillaOficina='${of.replace(/'/g,"\\'")}';render()">👥 Asignados</button>
+        ${isAdmin?`<button class="btn btn-sm" style="font-size:11px;flex:1;background:var(--afimex-blue-light);color:var(--afimex-blue);border:1px solid #bfdbfe" onclick="event.stopPropagation();plantillaAbrirConfigOficina('${of.replace(/'/g,"\\'")}')">⚙ Cupos</button>`:''}
+        <button class="btn btn-sm" style="font-size:11px;flex:1;background:#f0fdf4;color:#16a34a;border:1px solid #bbf7d0" onclick="event.stopPropagation();window._plantillaOficina='${of.replace(/'/g,"\\'")}';render()">👥 Ver asignados</button>
       </div>`:`<div style="font-size:11px;color:var(--text2)">Sin cupos configurados</div>`}
     </div>`;
   }).join('')}
@@ -9533,8 +9536,8 @@ ${OFICINAS.length===0?'<div class="empty-state">No hay oficinas configuradas</di
   <button class="btn btn-secondary btn-sm" onclick="window._plantillaOficina='';render()">← Regresar</button>
   <div style="font-size:16px;font-weight:700;color:var(--afimex-blue)">${of}</div>
   <div style="margin-left:auto;display:flex;gap:8px">
-    <button class="btn btn-sm" style="background:var(--afimex-blue-light);color:var(--afimex-blue);border:1px solid #bfdbfe" onclick="plantillaAbrirConfigOficina('${of.replace(/'/g,"\\'")}')">⚙ Editar cupos</button>
-    <button class="btn btn-primary btn-sm" onclick="plantillaGuardarAsignados('${of.replace(/'/g,"\\'")}')">💾 Guardar asignados</button>
+    ${isAdmin?`<button class="btn btn-sm" style="background:var(--afimex-blue-light);color:var(--afimex-blue);border:1px solid #bfdbfe" onclick="plantillaAbrirConfigOficina('${of.replace(/'/g,"\\'")}')">⚙ Editar cupos</button>`:''}
+    ${isAdmin?`<button class="btn btn-primary btn-sm" onclick="plantillaGuardarAsignados('${of.replace(/'/g,"\\'")}')">💾 Guardar asignados</button>`:''}
   </div>
 </div>
 
@@ -9554,20 +9557,20 @@ ${Object.keys(puestos).length===0
     const filasAsig = asignados.map((a,i)=>`
       <div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--border)">
         <div style="width:24px;height:24px;border-radius:50%;background:var(--afimex-blue-light);color:var(--afimex-blue);display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;flex-shrink:0">${i+1}</div>
-        <select data-of="${of}" data-pu="${pu}" data-idx="${i}" style="flex:1;border:1px solid var(--border2);border-radius:var(--radius-sm);padding:5px 8px;font-size:12px">
+        <select data-of="${of}" data-pu="${pu}" data-idx="${i}" ${!isAdmin?'disabled':''} style="flex:1;border:1px solid var(--border2);border-radius:var(--radius-sm);padding:5px 8px;font-size:12px${!isAdmin?';background:#f8fafc;color:var(--text2)':''}">
           <option value="">— Sin asignar —</option>
           ${empPuesto.map(e=>`<option value="${e.numNomina}" ${String(e.numNomina)===String(a.numNomina)?'selected':''}>${e.nombre} #${fmtNom(e.numNomina)}</option>`).join('')}
         </select>
-        <button onclick="plantillaQuitarAsignado('${of.replace(/'/g,"\\'")}','${pu.replace(/'/g,"\\'")}',${i})" style="background:#fff1f2;border:1px solid #fecdd3;color:#e11d48;border-radius:4px;padding:3px 8px;font-size:11px;cursor:pointer">✕</button>
+        ${isAdmin?`<button onclick="plantillaQuitarAsignado('${of.replace(/'/g,"\\'")}','${pu.replace(/'/g,"\\'")}',${i})" style="background:#fff1f2;border:1px solid #fecdd3;color:#e11d48;border-radius:4px;padding:3px 8px;font-size:11px;cursor:pointer">✕</button>`:''}
       </div>`).join('');
 
     // Filas vacías hasta completar el cupo
     const filasVacias = Array.from({length:libres},(_, i)=>`
       <div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--border)">
         <div style="width:24px;height:24px;border-radius:50%;background:#f1f5f9;color:#94a3b8;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;flex-shrink:0">${ocupados+i+1}</div>
-        <select data-of="${of}" data-pu="${pu}" data-idx="${ocupados+i}" style="flex:1;border:1px solid var(--border2);border-radius:var(--radius-sm);padding:5px 8px;font-size:12px;background:#fafafa">
+        <select data-of="${of}" data-pu="${pu}" data-idx="${ocupados+i}" ${!isAdmin?'disabled':''} style="flex:1;border:1px solid var(--border2);border-radius:var(--radius-sm);padding:5px 8px;font-size:12px;background:#fafafa${!isAdmin?';color:var(--text2)':''}">
           <option value="">— Lugar disponible —</option>
-          ${empPuesto.map(e=>`<option value="${e.numNomina}">${e.nombre} #${fmtNom(e.numNomina)}</option>`).join('')}
+          ${isAdmin?empPuesto.map(e=>`<option value="${e.numNomina}">${e.nombre} #${fmtNom(e.numNomina)}</option>`).join(''):''}
         </select>
       </div>`).join('');
 
@@ -9745,7 +9748,33 @@ async function plantillaGuardarAsignados(of){
   setTimeout(()=>{saving.style.opacity='0';setTimeout(()=>saving.remove(),300);},2500);
 }
 
-// ── Importar empleados activos del xlsx a la plantilla (se llama desde UI) ─
+// ── Descargar plantilla como Excel ────────────────────────────────────────
+function plantillaDescargarExcel(){
+  // Construir filas
+  const rows = [['Oficina','Puesto','Cupo','Ocupados','Disponibles','Asignados']];
+  OFICINAS.forEach(of=>{
+    const puestos = plantillaDB[of]||{};
+    Object.entries(puestos).sort((a,b)=>a[0].localeCompare(b[0])).forEach(([pu,cfg])=>{
+      const cupo   = cfg.cupo||0;
+      const asigs  = (cfg.asignados||[]).filter(a=>a&&a.numNomina);
+      const ocup   = asigs.length;
+      const disp   = cupo>0?Math.max(0,cupo-ocup):'-';
+      const nombres= asigs.map(a=>a.nombre+' #'+fmtNom(a.numNomina)).join(', ');
+      rows.push([of, pu, cupo, ocup, disp, nombres]);
+    });
+  });
+
+  // Convertir a CSV con BOM para que Excel abra con acentos
+  const csv = '\uFEFF' + rows.map(r=>r.map(c=>`"${String(c).replace(/"/g,'""')}"`).join(',')).join('\r\n');
+  const blob = new Blob([csv], {type:'text/csv;charset=utf-8;'});
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href     = url;
+  a.download = 'Plantilla_Afimex_'+new Date().toISOString().slice(0,10)+'.csv';
+  a.click();
+  URL.revokeObjectURL(url);
+  showToast('✓ Plantilla descargada','#16a34a');
+}
 function plantillaImportarActivos(){
   if(!confirm('¿Importar los 336 empleados activos a la plantilla? Esto asignará automáticamente a cada empleado a su puesto y oficina actual. Solo se asignará si el puesto ya tiene cupo configurado.')) return;
   let asignados=0;
