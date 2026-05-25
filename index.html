@@ -166,7 +166,7 @@ input.field-ok { border-color: #16a34a; background: #f0fdf4; }
     <div style="display:flex;align-items:center;gap:12px">
       <div>
         <div class="topbar-title">AFIMEX PEOPLE</div>
-        <div class="topbar-sub">V 11.3.4 | Recursos Humanos</div>
+        <div class="topbar-sub">V 11.3.5 | Recursos Humanos</div>
       </div>
     </div>
     <div style="position:absolute;left:50%;transform:translateX(-50%)">
@@ -9224,12 +9224,25 @@ function activosEditar(idx){
   const r = activosDB[idx];
   if(!r) return;
 
+  // Puestos de la oficina actual
+  const puestosOf = (PUESTOS_POR_OFICINA[r.oficina]||[]).sort();
+
   const overlay = document.createElement('div');
   overlay.id = 'activos-edit-overlay';
   overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:9000;display:flex;align-items:center;justify-content:center;padding:20px';
 
   const inp = (name,val='',extra='')=>`<input name="${name}" value="${(val||'').replace(/"/g,'&quot;')}" ${extra}
     style="width:100%;border:1px solid var(--border2);border-radius:var(--radius-sm);padding:7px 10px;font-size:13px">`;
+
+  const selOf = `<select name="oficina" id="activos-edit-oficina" onchange="activosEditActualizarPuestos()" style="width:100%;border:1px solid var(--border2);border-radius:var(--radius-sm);padding:7px 10px;font-size:13px">
+    ${OFICINAS.map(o=>`<option value="${o}" ${r.oficina===o?'selected':''}>${o}</option>`).join('')}
+  </select>`;
+
+  const selPu = `<select name="puesto" id="activos-edit-puesto" style="width:100%;border:1px solid var(--border2);border-radius:var(--radius-sm);padding:7px 10px;font-size:13px">
+    ${puestosOf.length===0
+      ? `<option value="${r.puesto}">${r.puesto}</option>`
+      : puestosOf.map(p=>`<option value="${p}" ${r.puesto===p?'selected':''}>${p}</option>`).join('')}
+  </select>`;
 
   overlay.innerHTML = `
   <div style="background:white;border-radius:12px;width:100%;max-width:560px;box-shadow:0 8px 40px rgba(0,0,0,.25)">
@@ -9242,12 +9255,8 @@ function activosEditar(idx){
         <input type="hidden" name="_idx" value="${idx}">
         <div class="form-grid" style="gap:12px">
           <div class="form-group full"><label>Nombre completo</label>${inp('nombre',r.nombre)}</div>
-          <div class="form-group"><label>Oficina</label>
-            <select name="oficina" style="width:100%;border:1px solid var(--border2);border-radius:var(--radius-sm);padding:7px 10px;font-size:13px">
-              ${OFICINAS.map(o=>`<option value="${o}" ${r.oficina===o?'selected':''}>${o}</option>`).join('')}
-            </select>
-          </div>
-          <div class="form-group"><label>Puesto</label>${inp('puesto',r.puesto)}</div>
+          <div class="form-group"><label>Oficina</label>${selOf}</div>
+          <div class="form-group"><label>Puesto</label>${selPu}</div>
         </div>
       </form>
     </div>
@@ -9259,6 +9268,17 @@ function activosEditar(idx){
 
   document.body.appendChild(overlay);
   overlay.addEventListener('click', e=>{ if(e.target===overlay) overlay.remove(); });
+}
+
+function activosEditActualizarPuestos(){
+  const selOf = document.getElementById('activos-edit-oficina');
+  const selPu = document.getElementById('activos-edit-puesto');
+  if(!selOf||!selPu) return;
+  const of = selOf.value;
+  const puestos = (PUESTOS_POR_OFICINA[of]||[]).sort();
+  selPu.innerHTML = puestos.length===0
+    ? '<option value="">— Sin puestos configurados —</option>'
+    : puestos.map(p=>`<option value="${p}">${p}</option>`).join('');
 }
 
 async function activosGuardarEdicion(){
