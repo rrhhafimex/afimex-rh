@@ -166,7 +166,7 @@ input.field-ok { border-color: #16a34a; background: #f0fdf4; }
     <div style="display:flex;align-items:center;gap:12px">
       <div>
         <div class="topbar-title">AFIMEX PEOPLE</div>
-        <div class="topbar-sub">V 11.3.1 | Recursos Humanos</div>
+        <div class="topbar-sub">V 11.3.4 | Recursos Humanos</div>
       </div>
     </div>
     <div style="position:absolute;left:50%;transform:translateX(-50%)">
@@ -336,6 +336,7 @@ let currentRole='generalista'; // 'generalista' | 'admin' | 'reclutador'
 let currentUser=null; // {nombre, usuario, rol} del usuario logueado
 let db=[], seguimientos=[], foliosData={}, bajaColaborador=null, finiquitosDB=[];
 let plantillaDB={}; // { "Monterrey": { "Auxiliar de Operaciones": { cupo: 12, asignados: [{ numNomina, nombre }] } } }
+let activosDB=[]; // Lista mutable de empleados activos del xlsx (se inicializa desde PLANTILLA_ACTIVOS_SEED)
 let _foliosOrden={col:'folio',dir:'desc'};
 let nomInput='', nssInput='';
 const today=new Date(); today.setHours(0,0,0,0);
@@ -527,6 +528,7 @@ async function loadData(){
   try{const v=localStorage.getItem('afimex-folios');if(v)foliosData=JSON.parse(v);}catch(e){foliosData={};}
   try{const v=localStorage.getItem('afimex-finiquitos');if(v)finiquitosDB=JSON.parse(v);}catch(e){finiquitosDB=[];}
   try{const v=localStorage.getItem('afimex-plantilla');if(v)plantillaDB=JSON.parse(v);}catch(e){plantillaDB={};}
+  try{const v=localStorage.getItem('afimex-activos');if(v)activosDB=JSON.parse(v);}catch(e){activosDB=[];}
 
   // ── Migración automática: buscar datos en TODAS las claves de localStorage ──
   // Útil cuando se abre el archivo desde una ruta diferente (nueva versión)
@@ -651,7 +653,7 @@ async function sincronizarDesdeGSheets(){
     // Cargar cada hoja individualmente para evitar respuestas gigantes
     const hojas = [
       'Expedientes','Seguimiento','Folios','Finiquitos','Usuarios',
-      'SV_Folios','Folios_Manual','Incapacidades','Pendientes','Plantilla',
+      'SV_Folios','Folios_Manual','Incapacidades','Pendientes','Plantilla','Activos',
       'Cat_Nominas','Cat_IATA','Cat_Puestos','Cat_Posiciones',
       'Cat_Direcciones','Cat_Actividades','Cat_Prestaciones',
       'Cat_DocFiniq','Cat_RegPatronal','Cat_Salarios'
@@ -695,6 +697,17 @@ async function sincronizarDesdeGSheets(){
 
     const pla = resultados['Plantilla'];
     if(pla && typeof pla==='object' && Object.keys(pla).length > 0){ plantillaDB = pla; localStorage.setItem('afimex-plantilla', JSON.stringify(plantillaDB)); }
+
+    const activos_dr = resultados['Activos'];
+    if(activos_dr && Array.isArray(activos_dr) && activos_dr.length > 0){
+      activosDB = activos_dr; localStorage.setItem('afimex-activos', JSON.stringify(activosDB));
+    } else {
+      // Primera vez: hoja vacía — cargar seed y subir a Drive
+      activosDB = PLANTILLA_ACTIVOS_SEED.map(r=>Object.assign({},r));
+      localStorage.setItem('afimex-activos', JSON.stringify(activosDB));
+      showToast('⬆ Cargando activos iniciales a Drive...','#1A5FA8');
+      try{ await jsonpSend('Activos', activosDB); }catch(e){}
+    }
 
     // ── Aplicar catálogos ──
     const nom = resultados['Cat_Nominas'];
@@ -784,6 +797,12 @@ async function syncPlantilla(){
   if(!tieneGSheets()){ setSyncStatus('local'); return; }
   setSyncStatus('saving');
   try{ await jsonpSend('Plantilla', plantillaDB); setSyncStatus('ok'); }catch(e){ setSyncStatus('error'); }
+}
+async function syncActivos(){
+  localStorage.setItem('afimex-activos', JSON.stringify(activosDB));
+  if(!tieneGSheets()){ setSyncStatus('local'); return; }
+  setSyncStatus('saving');
+  try{ await jsonpSend('Activos', activosDB); setSyncStatus('ok'); }catch(e){ setSyncStatus('error'); }
 }
 
 // Alias compatibles con llamadas existentes
@@ -1005,6 +1024,7 @@ function validarNSS(val){if(!val||String(val).trim()==='')return{ok:null,msg:''}
 function buildSelect(name,opts,ph,val=''){return`<select name="${name}"><option value="">— ${ph} —</option>${opts.map(o=>`<option value="${o}"${val===o?' selected':''}>${o}</option>`).join('')}</select>`;}
 function showToast(msg,color='#16a34a'){const t=document.getElementById('toast');t.textContent=msg;t.style.background=color;t.style.display='block';setTimeout(()=>t.style.display='none',5000);}
 function fmtDate(s){if(!s)return'';const d=new Date(s.includes('T')?s:s+'T12:00:00');if(isNaN(d.getTime()))return s;return d.toLocaleDateString('es-MX',{day:'2-digit',month:'long',year:'numeric'});}
+function fmtNom(n){return String(n||'').padStart(4,'0');}
 function addDias(dateStr,dias){if(!dateStr)return'';const d=new Date(dateStr+'T12:00:00');if(isNaN(d.getTime()))return'';d.setDate(d.getDate()+dias);return d.toISOString().split('T')[0];}
 function numToLetras(n){const u=['','un','dos','tres','cuatro','cinco','seis','siete','ocho','nueve','diez','once','doce','trece','catorce','quince','dieciséis','diecisiete','dieciocho','diecinueve'];const d=['','','veinte','treinta','cuarenta','cincuenta','sesenta','setenta','ochenta','noventa'];if(n<20)return u[n];if(n<100){const r=n%10;return r?d[Math.floor(n/10)]+'iún':d[Math.floor(n/10)].replace('nta','ntiún').replace('seis','seisenta');}return n;}
 
@@ -1411,7 +1431,7 @@ function printAlta(r){
               <div style="border:1.5px dashed #E8650A;border-radius:4px;padding:3px 18px;min-width:90px;background:white;color:#ccc;font-size:10pt;text-align:center;letter-spacing:3px">_ _ _ _ _</div>
             </div>
             <div>
-              <div class="num-badge">#${r.numNomina||'—'}</div>
+              <div class="num-badge">#${fmtNom(r.numNomina)||'—'}</div>
               <div class="tipo-pill" style="margin-top:4px;display:inline-block">${tipo}</div>
             </div>
           </div>
@@ -1511,7 +1531,7 @@ function printAlta(r){
         </div>
         <div style="padding:1px 8px; border-left:1px solid #d0d0d0; display:flex; flex-direction:column; align-items:center; justify-content:center; min-width:48px;">
           <div style="font-size:5pt; color:#888; text-transform:uppercase; letter-spacing:.3px; line-height:1;">Clave</div>
-          <div style="font-size:10pt; font-weight:700; color:#E8650A; line-height:1.2;">${r.numNomina||'—'}</div>
+          <div style="font-size:10pt; font-weight:700; color:#E8650A; line-height:1.2;">${fmtNom(r.numNomina)||'—'}</div>
         </div>
       </div>
       <!-- Renglón 2: Puesto + Oficina -->
@@ -1553,7 +1573,7 @@ function printAlta(r){
       </div>
       <div style="text-align:right;">
         <span style="font-size:7pt; color:#94a3b8; text-transform:uppercase; letter-spacing:.4px;">Núm. de Empleado</span>
-        <div style="font-weight:700; font-size:10pt; color:#E8650A; margin-top:1px;">${r.numNomina||'—'}</div>
+        <div style="font-weight:700; font-size:10pt; color:#E8650A; margin-top:1px;">${fmtNom(r.numNomina)||'—'}</div>
       </div>
     </div>
 
@@ -2026,7 +2046,7 @@ function printBaja(r){
   </div>
   <h2 class="blue">Datos Generales</h2>
   <div class="grid3">
-    <div class="fld"><div class="lbl">Nº de Nómina</div><div class="val">${r.numNomina||'—'}</div></div>
+    <div class="fld"><div class="lbl">Nº de Nómina</div><div class="val">${fmtNom(r.numNomina)||'—'}</div></div>
     <div class="fld"><div class="lbl">Nombre Completo</div><div class="val">${r.nombre||'—'}</div></div>
     <div class="fld"><div class="lbl">Puesto</div><div class="val">${r.puesto||'—'}</div></div>
     <div class="fld"><div class="lbl">Oficina</div><div class="val">${r.oficina||'—'}</div></div>
@@ -2089,7 +2109,7 @@ function altasHTML(){
 
   const printBar=`<div class="print-bar" id="print-bar-alta" style="${lastSaved?'background:#f0fdf4;border-color:#bbf7d0':''}">
     <span class="print-bar-label" style="${lastSaved?'color:#16a34a;font-weight:600':''}">
-      ${lastSaved ? `✓ Expediente #${lastSaved.numNomina} guardado — Listo para imprimir` : '📋 Guarda el expediente para habilitar la impresión'}
+      ${lastSaved ? `✓ Expediente #${fmtNom(lastSaved.numNomina)} guardado — Listo para imprimir` : '📋 Guarda el expediente para habilitar la impresión'}
     </span>
     <div class="print-bar-btns">
       ${lastSaved ? (isT?`
@@ -2291,7 +2311,7 @@ function seguimientoHTML(){
     const seg=seguimientos[idx]||{s1:false,s2:false,s3:false,comentario:'',estatus:r.estatus||'activo'};
     const isBaja=seg.estatus==='baja'||r.estatus==='baja';
     return`<tr class="${isBaja?'baja':''}">
-      <td>${r.numNomina}</td><td style="font-weight:600" title="${r.nombre}">${r.nombre}</td>
+      <td>${fmtNom(r.numNomina)}</td><td style="font-weight:600" title="${r.nombre}">${r.nombre}</td>
       <td>${r.telefono||'—'}</td><td>${r.fechaIngreso||'—'}</td>
       <td title="${r.oficina}">${r.oficina||'—'}</td><td title="${r.puesto}">${r.puesto||'—'}</td>
       <td>${diasChip(dias)}</td>
@@ -2701,7 +2721,7 @@ ${filtered.length===0?`<div class="empty-state">No se encontraron registros</div
   <th style="width:130px">Documentos</th><th style="width:160px">Acc.</th>
 </tr></thead>
 <tbody>${filtered.map(r=>`<tr>
-  <td>${r.numNomina||'&#x2014;'}</td><td title="${r.nombre}" style="font-weight:600">${r.nombre}</td>
+  <td>${fmtNom(r.numNomina)||'&#x2014;'}</td><td title="${r.nombre}" style="font-weight:600">${r.nombre}</td>
   <td>${badge(r.tipo)}</td><td title="${r.oficina}">${r.oficina||'&#x2014;'}</td>
   <td title="${r.puesto}">${r.puesto||'&#x2014;'}</td><td>${r.fechaIngreso||'&#x2014;'}</td>
   <td>${diasChip(diasDesde(r.fechaIngreso))}</td>
@@ -2723,44 +2743,83 @@ ${filtered.length===0?`<div class="empty-state">No se encontraron registros</div
   }
 
   // ══════════════════════════════════════════════════════════════
-  // SUB-PESTAÑA: ACTIVOS (del xlsx, excluyendo los que ya están en Altas)
+  // SUB-PESTAÑA: ACTIVOS
   // ══════════════════════════════════════════════════════════════
   if(subTab === 'activos'){
-    // Nóminas ya registradas en Altas
+    // Si activosDB está vacío, inicializar desde seed
+    if(activosDB.length === 0){
+      activosDB = PLANTILLA_ACTIVOS_SEED.map(r=>Object.assign({},r));
+      localStorage.setItem('afimex-activos', JSON.stringify(activosDB));
+    }
     const nomsEnAltas = new Set(db.map(r=>String(r.numNomina)));
-    // Filtrar del seed: excluir los que ya están en db
-    const activos = PLANTILLA_ACTIVOS_SEED.filter(r=>!nomsEnAltas.has(String(r.numNomina)));
-    const q = (document.getElementById('search-activos')?.value||'').toLowerCase();
-    const filtrados = activos.filter(r=>
-      (r.nombre||'').toLowerCase().includes(q)||
-      (r.oficina||'').toLowerCase().includes(q)||
-      (r.puesto||'').toLowerCase().includes(q)||
-      String(r.numNomina).includes(q)
-    );
+    // Excluir los que ya están en Altas
+    const activos = activosDB.filter(r=>!nomsEnAltas.has(String(r.numNomina)));
+
+    const q   = (document.getElementById('search-activos')?.value||'').toLowerCase();
+    const fOf = document.getElementById('filter-activos-of')?.value||'';
+    const fPu = document.getElementById('filter-activos-pu')?.value||'';
+
+    const filtrados = activos.filter(r=>{
+      const matchQ  = !q  || (r.nombre||'').toLowerCase().includes(q)||(r.oficina||'').toLowerCase().includes(q)||(r.puesto||'').toLowerCase().includes(q)||String(r.numNomina).includes(q);
+      const matchOf = !fOf || r.oficina===fOf;
+      const matchPu = !fPu || r.puesto===fPu;
+      return matchQ && matchOf && matchPu;
+    });
+
+    // Opciones únicas para filtros (del total sin filtrar)
+    const oficinasUnicas = [...new Set(activos.map(r=>r.oficina).filter(Boolean))].sort();
+    const puestosUnicos  = [...new Set(activos.filter(r=>!fOf||r.oficina===fOf).map(r=>r.puesto).filter(Boolean))].sort();
+
     return tabBar+`
 <div class="stats-row">
-  <div class="stat-card"><div class="stat-label">Total activos (xlsx)</div><div class="stat-value">${PLANTILLA_ACTIVOS_SEED.length}</div></div>
+  <div class="stat-card"><div class="stat-label">Total activos</div><div class="stat-value">${activosDB.length}</div></div>
   <div class="stat-card"><div class="stat-label">Ya en Altas</div><div class="stat-value" style="color:#16a34a">${nomsEnAltas.size}</div></div>
   <div class="stat-card"><div class="stat-label">Solo en Activos</div><div class="stat-value" style="color:var(--afimex-blue)">${activos.length}</div></div>
+  <div class="stat-card"><div class="stat-label">Mostrando</div><div class="stat-value">${filtrados.length}</div></div>
 </div>
-<div style="font-size:12px;color:var(--text2);margin-bottom:12px;background:var(--afimex-blue-light);border:1px solid #bfdbfe;border-radius:var(--radius-sm);padding:10px 14px">
-  ℹ Esta lista muestra los empleados del archivo de activos que aún <strong>no tienen expediente</strong> en la pestaña Altas. Los que ya están registrados allá no aparecen aquí.
+<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px;align-items:flex-end">
+  <div style="flex:2;min-width:200px">
+    <div style="font-size:11px;color:var(--text2);margin-bottom:4px;font-weight:500">Buscar</div>
+    <input id="search-activos" placeholder="Nombre, # nómina..." oninput="render()" value="${document.getElementById('search-activos')?.value||''}"
+      style="width:100%;border:1px solid var(--border2);border-radius:var(--radius-sm);padding:7px 10px;font-size:13px">
+  </div>
+  <div style="flex:1;min-width:160px">
+    <div style="font-size:11px;color:var(--text2);margin-bottom:4px;font-weight:500">Oficina</div>
+    <select id="filter-activos-of" onchange="render()" style="width:100%;border:1px solid var(--border2);border-radius:var(--radius-sm);padding:7px 10px;font-size:13px">
+      <option value="">Todas</option>
+      ${oficinasUnicas.map(o=>`<option value="${o}" ${fOf===o?'selected':''}>${o}</option>`).join('')}
+    </select>
+  </div>
+  <div style="flex:1;min-width:160px">
+    <div style="font-size:11px;color:var(--text2);margin-bottom:4px;font-weight:500">Puesto</div>
+    <select id="filter-activos-pu" onchange="render()" style="width:100%;border:1px solid var(--border2);border-radius:var(--radius-sm);padding:7px 10px;font-size:13px">
+      <option value="">Todos</option>
+      ${puestosUnicos.map(p=>`<option value="${p}" ${fPu===p?'selected':''}>${p}</option>`).join('')}
+    </select>
+  </div>
+  ${(q||fOf||fPu)?`<button onclick="document.getElementById('search-activos').value='';document.getElementById('filter-activos-of').value='';document.getElementById('filter-activos-pu').value='';render()" style="padding:7px 14px;border:1px solid var(--border2);border-radius:var(--radius-sm);background:white;font-size:13px;cursor:pointer;align-self:flex-end">✕ Limpiar</button>`:''}
 </div>
-<div class="search-bar"><input id="search-activos" placeholder="Buscar por nombre, oficina, puesto o # nómina..." oninput="render()" value="${document.getElementById('search-activos')?.value||''}"></div>
 ${filtrados.length===0?`<div class="empty-state">No se encontraron registros</div>`:`
 <div style="overflow-x:auto"><table class="db-table">
 <thead><tr>
   <th style="width:60px"># Nom.</th>
   <th>Nombre</th>
-  <th style="width:160px">Oficina / Depto</th>
+  <th style="width:160px">Oficina</th>
   <th style="width:200px">Puesto</th>
+  <th style="width:170px">Acciones</th>
 </tr></thead>
-<tbody>${filtrados.map(r=>`<tr>
-  <td style="font-weight:600;color:var(--afimex-blue)">${r.numNomina}</td>
+<tbody>${filtrados.map(r=>{
+  const idx = activosDB.findIndex(a=>String(a.numNomina)===String(r.numNomina));
+  return `<tr>
+  <td style="font-weight:600;color:var(--afimex-blue)">${fmtNom(r.numNomina)}</td>
   <td style="font-weight:600">${r.nombre}</td>
   <td><span style="font-size:11px;background:var(--afimex-blue-light);color:var(--afimex-blue);padding:2px 8px;border-radius:99px">${r.oficina}</span></td>
   <td style="font-size:12px">${r.puesto}</td>
-</tr>`).join('')}
+  <td style="white-space:nowrap">
+    <button class="btn btn-sm" style="background:#f5f3ff;border:1px solid #ddd6fe;color:#7c3aed;margin-right:3px" onclick="activosEditar(${idx})">&#9998; Editar</button>
+    <button class="btn btn-sm" style="background:#fff1f2;border:1px solid #fecdd3;color:#e11d48" onclick="activosEliminar(${idx})">&#128465; Eliminar</button>
+  </td>
+</tr>`;}).join('')}
 </tbody></table></div>`}`;
   }
 
@@ -2799,7 +2858,7 @@ function mostrarConfirmacion(numNomina, tipo){
         <div style="font-size:40px;margin-bottom:8px">✅</div>
         <div style="font-size:20px;font-weight:700;color:#15803d;margin-bottom:4px">Expediente guardado correctamente</div>
         <div style="font-size:14px;color:#166534">
-          <strong>${r.nombre}</strong> &nbsp;|&nbsp; # Nómina: <strong>${numNomina}</strong> &nbsp;|&nbsp; Tipo: <strong>${tipo.charAt(0).toUpperCase()+tipo.slice(1)}</strong>
+          <strong>${r.nombre}</strong> &nbsp;|&nbsp; # Nómina: <strong>${fmtNom(numNomina)}</strong> &nbsp;|&nbsp; Tipo: <strong>${tipo.charAt(0).toUpperCase()+tipo.slice(1)}</strong>
         </div>
       </div>
 
@@ -2836,7 +2895,7 @@ function mostrarConfirmacion(numNomina, tipo){
         <div style="font-weight:600;margin-bottom:10px;color:#374151">Resumen del expediente</div>
         <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">
           ${[
-            ['Nombre',r.nombre],['# Nómina',numNomina],['NSS',r.nss],
+            ['Nombre',r.nombre],['# Nómina',fmtNom(numNomina)],['NSS',r.nss],
             ['CURP',r.curp],['RFC',r.rfc||'—'],['Fecha ingreso',fmtDate(r.fechaIngreso)],
             ['Oficina',r.oficina],['Puesto',r.puesto],['Teléfono',r.telefono||'—'],
           ].map(([l,v])=>`<div><span style="font-size:11px;color:#6b7280;display:block;text-transform:uppercase">${l}</span><span style="font-weight:500">${v||'—'}</span></div>`).join('')}
@@ -3336,7 +3395,7 @@ function abrirEditar(idx){
     <div style="background:var(--afimex-blue);border-radius:12px 12px 0 0;padding:16px 24px;display:flex;align-items:center;justify-content:space-between">
       <div>
         <div style="font-size:11px;color:rgba(255,255,255,.7);text-transform:uppercase;letter-spacing:.5px;margin-bottom:2px">Editando expediente</div>
-        <div style="font-size:16px;font-weight:700;color:white">${r.nombre||'—'} <span style="font-size:13px;font-weight:400;opacity:.8">· #${r.numNomina||'—'}</span></div>
+        <div style="font-size:16px;font-weight:700;color:white">${r.nombre||'—'} <span style="font-size:13px;font-weight:400;opacity:.8">· #${fmtNom(r.numNomina)||'—'}</span></div>
       </div>
       <button onclick="cerrarEditar()" style="background:rgba(255,255,255,.15);border:none;color:white;width:32px;height:32px;border-radius:50%;font-size:18px;cursor:pointer;display:flex;align-items:center;justify-content:center">×</button>
     </div>
@@ -4255,7 +4314,7 @@ function docsSecGafete(r){
           <div style="background:var(--bg2);padding:6px 12px;display:flex;justify-content:space-between;border-top:1px solid var(--border)">
             <div style="text-align:center">
               <div style="font-size:8px;color:var(--text2)">NÓMINA</div>
-              <div style="font-size:11px;font-weight:700;color:var(--afimex-orange)">#${r.numNomina||'—'}</div>
+              <div style="font-size:11px;font-weight:700;color:var(--afimex-orange)">#${fmtNom(r.numNomina)||'—'}</div>
             </div>
             <div style="text-align:center">
               <div style="font-size:8px;color:var(--text2)">OFICINA</div>
@@ -4288,7 +4347,7 @@ function docsSecReimpresion(r){
         <div><span style="color:var(--text2);font-size:11px;display:block">Nombre</span><strong>${r.nombre||'—'}</strong></div>
         <div><span style="color:var(--text2);font-size:11px;display:block">Puesto</span><strong>${r.puesto||'—'}</strong></div>
         <div><span style="color:var(--text2);font-size:11px;display:block">Oficina</span><strong>${r.oficina||'—'}</strong></div>
-        <div><span style="color:var(--text2);font-size:11px;display:block">Nómina</span><strong>#${r.numNomina||'—'}</strong></div>
+        <div><span style="color:var(--text2);font-size:11px;display:block">Nómina</span><strong>#${fmtNom(r.numNomina)||'—'}</strong></div>
         <div><span style="color:var(--text2);font-size:11px;display:block">Ingreso</span><strong>${fmtDate(r.fechaIngreso)||'—'}</strong></div>
         <div><span style="color:var(--text2);font-size:11px;display:block">Tipo</span><strong>${(r.tipo||'—').toUpperCase()}</strong></div>
       </div>
@@ -9104,7 +9163,7 @@ function penAgregarComentario(id){
   // ── Auto-sync en background cada 10 minutos ──────────────────
   // Descarga solo datos operativos silenciosamente y aplica cambios si hay novedades
   if(tieneGSheets()){
-    const AUTOSYNC_HOJAS = ['Expedientes','Seguimiento','Incapacidades','Pendientes','Finiquitos','SV_Folios','Folios_Manual','Folios','Plantilla'];
+    const AUTOSYNC_HOJAS = ['Expedientes','Seguimiento','Incapacidades','Pendientes','Finiquitos','SV_Folios','Folios_Manual','Folios','Plantilla','Activos'];
     async function autoSyncBackground(){
       try{
         let huboCambios = false;
@@ -9140,6 +9199,8 @@ function penAgregarComentario(id){
             localStorage.setItem('afimex-folios', JSON.stringify(foliosData));
           } else if(hoja==='Plantilla' && datos && typeof datos==='object' && Object.keys(datos).length>0){
             plantillaDB = datos; localStorage.setItem('afimex-plantilla', JSON.stringify(plantillaDB));
+          } else if(hoja==='Activos' && Array.isArray(datos) && datos.length>0){
+            activosDB = datos; localStorage.setItem('afimex-activos', JSON.stringify(activosDB));
           }
         }
         if(huboCambios){
@@ -9158,8 +9219,72 @@ function penAgregarComentario(id){
   }
 })();
 
-// ═══════════════════════════════════════════════════════════════════════════
-// MÓDULO PLANTILLA
+// ── ACTIVOS: Editar y Eliminar ─────────────────────────────────────────────
+function activosEditar(idx){
+  const r = activosDB[idx];
+  if(!r) return;
+
+  const overlay = document.createElement('div');
+  overlay.id = 'activos-edit-overlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:9000;display:flex;align-items:center;justify-content:center;padding:20px';
+
+  const inp = (name,val='',extra='')=>`<input name="${name}" value="${(val||'').replace(/"/g,'&quot;')}" ${extra}
+    style="width:100%;border:1px solid var(--border2);border-radius:var(--radius-sm);padding:7px 10px;font-size:13px">`;
+
+  overlay.innerHTML = `
+  <div style="background:white;border-radius:12px;width:100%;max-width:560px;box-shadow:0 8px 40px rgba(0,0,0,.25)">
+    <div style="background:var(--afimex-blue);border-radius:12px 12px 0 0;padding:16px 24px;display:flex;align-items:center;justify-content:space-between">
+      <div style="font-size:15px;font-weight:700;color:white">Editar activo — #${fmtNom(r.numNomina)}</div>
+      <button onclick="document.getElementById('activos-edit-overlay').remove()" style="background:rgba(255,255,255,.15);border:none;color:white;width:32px;height:32px;border-radius:50%;font-size:18px;cursor:pointer">×</button>
+    </div>
+    <div style="padding:24px">
+      <form id="activos-edit-form">
+        <input type="hidden" name="_idx" value="${idx}">
+        <div class="form-grid" style="gap:12px">
+          <div class="form-group full"><label>Nombre completo</label>${inp('nombre',r.nombre)}</div>
+          <div class="form-group"><label>Oficina</label>
+            <select name="oficina" style="width:100%;border:1px solid var(--border2);border-radius:var(--radius-sm);padding:7px 10px;font-size:13px">
+              ${OFICINAS.map(o=>`<option value="${o}" ${r.oficina===o?'selected':''}>${o}</option>`).join('')}
+            </select>
+          </div>
+          <div class="form-group"><label>Puesto</label>${inp('puesto',r.puesto)}</div>
+        </div>
+      </form>
+    </div>
+    <div style="padding:16px 24px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:10px;background:var(--bg2);border-radius:0 0 12px 12px">
+      <button onclick="document.getElementById('activos-edit-overlay').remove()" style="padding:8px 20px;border:1px solid var(--border2);background:white;border-radius:var(--radius-sm);font-size:13px;cursor:pointer">Cancelar</button>
+      <button onclick="activosGuardarEdicion()" style="padding:8px 24px;background:var(--afimex-blue);color:white;border:none;border-radius:var(--radius-sm);font-size:13px;font-weight:600;cursor:pointer">💾 Guardar</button>
+    </div>
+  </div>`;
+
+  document.body.appendChild(overlay);
+  overlay.addEventListener('click', e=>{ if(e.target===overlay) overlay.remove(); });
+}
+
+async function activosGuardarEdicion(){
+  const form = document.getElementById('activos-edit-form');
+  if(!form) return;
+  const fd = new FormData(form);
+  const idx = parseInt(fd.get('_idx'));
+  if(isNaN(idx)||!activosDB[idx]) return;
+  activosDB[idx].nombre  = (fd.get('nombre')||'').trim();
+  activosDB[idx].oficina = (fd.get('oficina')||'').trim();
+  activosDB[idx].puesto  = (fd.get('puesto')||'').trim();
+  document.getElementById('activos-edit-overlay')?.remove();
+  render();
+  showToast('✓ Registro actualizado','#16a34a');
+  try{ await syncActivos(); }catch(e){ showToast('Guardado local. Sin conexión a Drive','#f59e0b'); }
+}
+
+async function activosEliminar(idx){
+  const r = activosDB[idx];
+  if(!r) return;
+  if(!confirm(`¿Eliminar a ${r.nombre} (#${fmtNom(r.numNomina)}) de la lista de activos?`)) return;
+  activosDB.splice(idx,1);
+  render();
+  showToast('Eliminado de activos','#dc2626');
+  try{ await syncActivos(); }catch(e){}
+}
 // ═══════════════════════════════════════════════════════════════════════════
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -9272,11 +9397,11 @@ ${OFICINAS.length===0?'<div class="empty-state">No hay oficinas configuradas</di
   // Vista detalle de oficina
   const of = ofSel;
   const puestos = plantillaDB[of]||{};
-  // Pool combinado: db activos + seed, sin duplicados, filtrados por oficina
+  // Pool combinado: db activos + activosDB, sin duplicados, filtrados por oficina
   const nomsEnDb = new Set(db.filter(r=>r.estatus!=='baja').map(r=>String(r.numNomina)));
   const empleadosOficina = [
     ...db.filter(r=>r.oficina===of&&r.estatus!=='baja'),
-    ...PLANTILLA_ACTIVOS_SEED.filter(r=>r.oficina===of&&!nomsEnDb.has(String(r.numNomina)))
+    ...activosDB.filter(r=>r.oficina===of&&!nomsEnDb.has(String(r.numNomina)))
   ].sort((a,b)=>(a.nombre||'').localeCompare(b.nombre||''));
   // Función que filtra por puesto (normaliza mayúsculas para comparar)
   const empleadosPorPuesto = (pu) => empleadosOficina.filter(e=>
@@ -9311,7 +9436,7 @@ ${Object.keys(puestos).length===0
         <div style="width:24px;height:24px;border-radius:50%;background:var(--afimex-blue-light);color:var(--afimex-blue);display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;flex-shrink:0">${i+1}</div>
         <select data-of="${of}" data-pu="${pu}" data-idx="${i}" style="flex:1;border:1px solid var(--border2);border-radius:var(--radius-sm);padding:5px 8px;font-size:12px">
           <option value="">— Sin asignar —</option>
-          ${empPuesto.map(e=>`<option value="${e.numNomina}" ${String(e.numNomina)===String(a.numNomina)?'selected':''}>${e.nombre} #${e.numNomina}</option>`).join('')}
+          ${empPuesto.map(e=>`<option value="${e.numNomina}" ${String(e.numNomina)===String(a.numNomina)?'selected':''}>${e.nombre} #${fmtNom(e.numNomina)}</option>`).join('')}
         </select>
         <button onclick="plantillaQuitarAsignado('${of.replace(/'/g,"\\'")}','${pu.replace(/'/g,"\\'")}',${i})" style="background:#fff1f2;border:1px solid #fecdd3;color:#e11d48;border-radius:4px;padding:3px 8px;font-size:11px;cursor:pointer">✕</button>
       </div>`).join('');
@@ -9322,7 +9447,7 @@ ${Object.keys(puestos).length===0
         <div style="width:24px;height:24px;border-radius:50%;background:#f1f5f9;color:#94a3b8;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;flex-shrink:0">${ocupados+i+1}</div>
         <select data-of="${of}" data-pu="${pu}" data-idx="${ocupados+i}" style="flex:1;border:1px solid var(--border2);border-radius:var(--radius-sm);padding:5px 8px;font-size:12px;background:#fafafa">
           <option value="">— Lugar disponible —</option>
-          ${empPuesto.map(e=>`<option value="${e.numNomina}">${e.nombre} #${e.numNomina}</option>`).join('')}
+          ${empPuesto.map(e=>`<option value="${e.numNomina}">${e.nombre} #${fmtNom(e.numNomina)}</option>`).join('')}
         </select>
       </div>`).join('');
 
@@ -9495,7 +9620,7 @@ async function plantillaGuardarAsignados(of){
 function plantillaImportarActivos(){
   if(!confirm('¿Importar los 336 empleados activos a la plantilla? Esto asignará automáticamente a cada empleado a su puesto y oficina actual. Solo se asignará si el puesto ya tiene cupo configurado.')) return;
   let asignados=0;
-  PLANTILLA_ACTIVOS_SEED.forEach(({numNomina,nombre,oficina,puesto})=>{
+  activosDB.forEach(({numNomina,nombre,oficina,puesto})=>{
     if(plantillaDB[oficina]&&plantillaDB[oficina][puesto]){
       const lista = plantillaDB[oficina][puesto].asignados=plantillaDB[oficina][puesto].asignados||[];
       if(!lista.find(a=>a.numNomina===numNomina)){
