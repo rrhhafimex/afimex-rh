@@ -166,7 +166,7 @@ input.field-ok { border-color: #16a34a; background: #f0fdf4; }
     <div style="display:flex;align-items:center;gap:12px">
       <div>
         <div class="topbar-title">AFIMEX PEOPLE</div>
-        <div class="topbar-sub">V 11.3.6 | Recursos Humanos</div>
+        <div class="topbar-sub">V 11.3.7 | Recursos Humanos</div>
       </div>
     </div>
     <div style="position:absolute;left:50%;transform:translateX(-50%)">
@@ -3438,8 +3438,21 @@ function abrirEditar(idx){
       <div class="form-grid" style="margin-bottom:14px">
         <div class="form-group"><label>Fecha de ingreso</label>${inp('fechaIngreso',r.fechaIngreso,'type="date"')}</div>
         <div class="form-group"><label>ID de Vacante</label>${inp('idVacante',r.idVacante)}</div>
-        <div class="form-group"><label>Oficina</label>${sel('oficina',OFICINAS,r.oficina||'')}</div>
-        <div class="form-group"><label>Puesto</label>${inp('puesto',r.puesto)}</div>
+        <div class="form-group"><label>Oficina</label>
+          <select name="oficina" id="editar-oficina" onchange="editarActualizarPuestos()" style="border:1px solid var(--border2);border-radius:var(--radius-sm);padding:6px 10px;font-size:13px;width:100%">
+            ${OFICINAS.map(o=>`<option value="${o}" ${(r.oficina||'')===o?'selected':''}>${o}</option>`).join('')}
+          </select>
+        </div>
+        <div class="form-group"><label>Puesto</label>
+          <select name="puesto" id="editar-puesto" style="border:1px solid var(--border2);border-radius:var(--radius-sm);padding:6px 10px;font-size:13px;width:100%">
+            ${(()=>{
+              const puestos = (PUESTOS_POR_OFICINA[r.oficina||'']||[]).sort();
+              // Si el puesto actual no está en la lista (ej. recién agregado), incluirlo
+              const lista = puestos.includes(r.puesto||'') ? puestos : [...puestos, r.puesto||''].filter(Boolean).sort();
+              return lista.map(p=>`<option value="${p}" ${p===(r.puesto||'')?'selected':''}>${p}</option>`).join('');
+            })()}
+          </select>
+        </div>
         <div class="form-group"><label>CLABE interbancaria</label>${inp('clabe',r.clabe,'maxlength="18"')}</div>
         <div class="form-group"><label>Número de cuenta</label>${inp('cuenta',r.cuenta)}</div>
       </div>
@@ -3506,6 +3519,16 @@ function abrirEditar(idx){
 function cerrarEditar(){
   const o = document.getElementById('editar-overlay');
   if(o) o.remove();
+}
+
+function editarActualizarPuestos(){
+  const selOf = document.getElementById('editar-oficina');
+  const selPu = document.getElementById('editar-puesto');
+  if(!selOf||!selPu) return;
+  const puestos = (PUESTOS_POR_OFICINA[selOf.value]||[]).sort();
+  selPu.innerHTML = puestos.length===0
+    ? '<option value="">— Sin puestos configurados —</option>'
+    : puestos.map(p=>`<option value="${p}">${p}</option>`).join('');
 }
 
 async function guardarEditar(){
