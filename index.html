@@ -3404,8 +3404,31 @@ async function guardarEditar(){
   db[idx] = r;
   cerrarEditar();
   render();
-  showToast('✓ Expediente actualizado','#16a34a');
-  try{ await saveDB(); }catch(e){ showToast('Guardado local. Fallo al subir a Drive','#f59e0b'); }
+
+  // Mostrar indicador de guardado
+  const saving = document.createElement('div');
+  saving.id = 'saving-indicator';
+  saving.style.cssText = 'position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#1A5FA8;color:white;padding:12px 24px;border-radius:99px;font-size:13px;font-weight:600;box-shadow:0 4px 20px rgba(0,0,0,.2);z-index:9999;display:flex;align-items:center;gap:10px;transition:opacity .3s';
+  saving.innerHTML = '<span style="display:inline-block;width:16px;height:16px;border:2px solid rgba(255,255,255,.4);border-top-color:white;border-radius:50%;animation:spin .7s linear infinite"></span> Guardando en Drive...';
+  // Asegurarse de que la animación spin esté definida
+  if(!document.getElementById('spin-style')){
+    const st=document.createElement('style');
+    st.id='spin-style';
+    st.textContent='@keyframes spin{to{transform:rotate(360deg)}}';
+    document.head.appendChild(st);
+  }
+  document.body.appendChild(saving);
+
+  try{
+    await saveDB();
+    saving.style.background = '#16a34a';
+    saving.innerHTML = '✓ Cambios guardados correctamente';
+    setTimeout(()=>{ saving.style.opacity='0'; setTimeout(()=>saving.remove(),300); }, 2000);
+  }catch(e){
+    saving.style.background = '#f59e0b';
+    saving.innerHTML = '⚠ Guardado local. Sin conexión a Drive';
+    setTimeout(()=>{ saving.style.opacity='0'; setTimeout(()=>saving.remove(),300); }, 3000);
+  }
 }
 
 // ─── DATA NÓMINAS ─────────────────────────────────────────────────────────────
