@@ -23,7 +23,7 @@
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
 }
 body { background: var(--bg2); min-height: 100vh; }
-.app { max-width: 1300px; margin: 0 auto; background: var(--bg); min-height: 100vh; }
+.app { max-width: 100%; margin: 0; background: var(--bg); min-height: 100vh; }
 .topbar { background: var(--afimex-orange); padding: 10px 20px; display: flex; align-items: center; justify-content: space-between; }
 .topbar-title { color: white; font-size: 15px; font-weight: 600; }
 .topbar-sub { color: rgba(255,255,255,0.85); font-size: 11px; margin-top: 1px; }
@@ -166,7 +166,7 @@ input.field-ok { border-color: #16a34a; background: #f0fdf4; }
     <div style="display:flex;align-items:center;gap:12px">
       <div>
         <div class="topbar-title">AFIMEX PEOPLE</div>
-        <div class="topbar-sub">V 11.3.9 | Recursos Humanos</div>
+        <div class="topbar-sub">V 11.3.11 | Recursos Humanos</div>
       </div>
     </div>
     <div style="position:absolute;left:50%;transform:translateX(-50%)">
@@ -1155,6 +1155,32 @@ function actualizarNominaAlta(puesto, periodo) {
   const claveRel = puesto && iata ? buscarPosicion(puesto, iata) : null;
   const elRel = document.getElementById('nom-clave-rel');
   if(elRel) elRel.textContent = claveRel || '—';
+
+  // ── Aviso de plantilla ──────────────────────────────────────────────────
+  const elPlantilla = document.getElementById('plantilla-aviso-alta');
+  if(elPlantilla){
+    elPlantilla.style.display = 'none';
+    elPlantilla.textContent = '';
+  }
+  if(puesto && oficinaSel && plantillaDB[oficinaSel] && plantillaDB[oficinaSel][puesto]){
+    const _cupo = plantillaDB[oficinaSel][puesto].cupo || 0;
+    const _ocup = (plantillaDB[oficinaSel][puesto].asignados||[]).filter(a=>a&&a.numNomina).length;
+    const _disp = Math.max(0, _cupo - _ocup);
+    if(elPlantilla && _cupo > 0){
+      elPlantilla.style.display = 'flex';
+      if(_disp === 0){
+        elPlantilla.style.background = '#fef2f2';
+        elPlantilla.style.borderColor = '#fecaca';
+        elPlantilla.style.color = '#dc2626';
+        elPlantilla.innerHTML = '⛔ <strong>Plantilla llena</strong> — '+puesto+' en '+oficinaSel+' ('+_ocup+'/'+_cupo+'). No podrás guardar esta alta.';
+      } else {
+        elPlantilla.style.background = '#f0fdf4';
+        elPlantilla.style.borderColor = '#bbf7d0';
+        elPlantilla.style.color = '#16a34a';
+        elPlantilla.innerHTML = '✓ Plantilla disponible — '+_disp+' lugar'+(_disp!==1?'es':'')+' libre'+(_disp!==1?'s':'')+' ('+_ocup+'/'+_cupo+')';
+      }
+    }
+  }
 }
 
 // ─── PRINT ALTA (PDF via print dialog) ───────────────────────────────────────
@@ -2183,6 +2209,7 @@ ${printBar}
     </select>
   </div>
 </div>
+<div id="plantilla-aviso-alta" style="display:none;align-items:center;gap:8px;padding:10px 14px;border:1px solid;border-radius:var(--radius-sm);font-size:13px;margin-bottom:12px;font-weight:500"></div>
 <div class="section-title orange">Datos de Nómina</div>
 <div id="nomina-datos-alta" style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:14px;margin-bottom:14px;">
   <div style="font-size:11px;color:var(--text2);margin-bottom:10px">Se completa automáticamente al seleccionar Oficina y Puesto.</div>
@@ -9524,6 +9551,7 @@ ${Object.keys(puestos).length===0
 // ── Modal configurar cupos de una oficina ──────────────────────────────────
 function plantillaAbrirConfigOficina(of){
   const puestos = plantillaDB[of]||{};
+  // Todos los puestos: los del catálogo para esta oficina + los ya configurados en plantilla
   const todosLosPuestos = [...new Set([
     ...(PUESTOS_POR_OFICINA[of]||[]),
     ...Object.keys(puestos)
