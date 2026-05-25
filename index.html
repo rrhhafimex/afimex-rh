@@ -166,7 +166,7 @@ input.field-ok { border-color: #16a34a; background: #f0fdf4; }
     <div style="display:flex;align-items:center;gap:12px">
       <div>
         <div class="topbar-title">AFIMEX PEOPLE</div>
-        <div class="topbar-sub">V 11.2.16 | Recursos Humanos</div>
+        <div class="topbar-sub">V 11.3.0 | Recursos Humanos</div>
       </div>
     </div>
     <div style="position:absolute;left:50%;transform:translateX(-50%)">
@@ -2672,6 +2672,7 @@ function baseHTML(){
 
   const tabBar = `<div style="display:flex;gap:0;border-bottom:1px solid var(--border);margin-bottom:16px">
     ${stBtn('altas','&#x1F465; Altas')}
+    ${stBtn('activos','&#x1F4CA; Activos')}
     ${stBtn('finiquitos','&#x1F4B0; Finiquitos')}
     ${stBtn('folios','&#x1F4CB; Folios de Salida')}
   </div>`;
@@ -2717,6 +2718,48 @@ ${filtered.length===0?`<div class="empty-state">No se encontraron registros</div
     <button class="btn btn-sm" style="background:#f5f3ff;border:1px solid #ddd6fe;color:#7c3aed;margin-right:3px" title="Editar expediente" onclick="abrirEditar(${db.indexOf(r)})">&#9998; Editar</button>
     <button class="btn btn-sm" style="background:#fff1f2;border:1px solid #fecdd3;color:#e11d48" title="Eliminar expediente" onclick="eliminar(${db.indexOf(r)})">&#128465; Eliminar</button>
   </td>
+</tr>`).join('')}
+</tbody></table></div>`}`;
+  }
+
+  // ══════════════════════════════════════════════════════════════
+  // SUB-PESTAÑA: ACTIVOS (del xlsx, excluyendo los que ya están en Altas)
+  // ══════════════════════════════════════════════════════════════
+  if(subTab === 'activos'){
+    // Nóminas ya registradas en Altas
+    const nomsEnAltas = new Set(db.map(r=>String(r.numNomina)));
+    // Filtrar del seed: excluir los que ya están en db
+    const activos = PLANTILLA_ACTIVOS_SEED.filter(r=>!nomsEnAltas.has(String(r.numNomina)));
+    const q = (document.getElementById('search-activos')?.value||'').toLowerCase();
+    const filtrados = activos.filter(r=>
+      (r.nombre||'').toLowerCase().includes(q)||
+      (r.oficina||'').toLowerCase().includes(q)||
+      (r.puesto||'').toLowerCase().includes(q)||
+      String(r.numNomina).includes(q)
+    );
+    return tabBar+`
+<div class="stats-row">
+  <div class="stat-card"><div class="stat-label">Total activos (xlsx)</div><div class="stat-value">${PLANTILLA_ACTIVOS_SEED.length}</div></div>
+  <div class="stat-card"><div class="stat-label">Ya en Altas</div><div class="stat-value" style="color:#16a34a">${nomsEnAltas.size}</div></div>
+  <div class="stat-card"><div class="stat-label">Solo en Activos</div><div class="stat-value" style="color:var(--afimex-blue)">${activos.length}</div></div>
+</div>
+<div style="font-size:12px;color:var(--text2);margin-bottom:12px;background:var(--afimex-blue-light);border:1px solid #bfdbfe;border-radius:var(--radius-sm);padding:10px 14px">
+  ℹ Esta lista muestra los empleados del archivo de activos que aún <strong>no tienen expediente</strong> en la pestaña Altas. Los que ya están registrados allá no aparecen aquí.
+</div>
+<div class="search-bar"><input id="search-activos" placeholder="Buscar por nombre, oficina, puesto o # nómina..." oninput="render()" value="${document.getElementById('search-activos')?.value||''}"></div>
+${filtrados.length===0?`<div class="empty-state">No se encontraron registros</div>`:`
+<div style="overflow-x:auto"><table class="db-table">
+<thead><tr>
+  <th style="width:60px"># Nom.</th>
+  <th>Nombre</th>
+  <th style="width:160px">Oficina / Depto</th>
+  <th style="width:200px">Puesto</th>
+</tr></thead>
+<tbody>${filtrados.map(r=>`<tr>
+  <td style="font-weight:600;color:var(--afimex-blue)">${r.numNomina}</td>
+  <td style="font-weight:600">${r.nombre}</td>
+  <td><span style="font-size:11px;background:var(--afimex-blue-light);color:var(--afimex-blue);padding:2px 8px;border-radius:99px">${r.oficina}</span></td>
+  <td style="font-size:12px">${r.puesto}</td>
 </tr>`).join('')}
 </tbody></table></div>`}`;
   }
@@ -9229,7 +9272,12 @@ ${OFICINAS.length===0?'<div class="empty-state">No hay oficinas configuradas</di
   // Vista detalle de oficina
   const of = ofSel;
   const puestos = plantillaDB[of]||{};
-  const empleadosOf = db.filter(r=>r.oficina===of&&r.estatus!=='baja');
+  // Combinar empleados de db + seed, sin duplicados, filtrados por oficina
+  const nomsEnDb = new Set(db.filter(r=>r.estatus!=='baja').map(r=>String(r.numNomina)));
+  const empleadosOf = [
+    ...db.filter(r=>r.oficina===of&&r.estatus!=='baja'),
+    ...PLANTILLA_ACTIVOS_SEED.filter(r=>r.oficina===of&&!nomsEnDb.has(String(r.numNomina)))
+  ].sort((a,b)=>(a.nombre||'').localeCompare(b.nombre||''));
 
   return `
 <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;flex-wrap:wrap">
