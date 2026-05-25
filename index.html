@@ -321,8 +321,8 @@ var OFICINAS_DIR = {
 };
 
 const TABS_GEN = ['altas','baja','seguimiento','docs','folios','pendientes'];
-const TABS_ADM = ['altas','baja','seguimiento','base','docs','finiquitos','incapacidades','usuarios','config','pendientes'];
-const TAB_LABELS = {altas:'📋 Alta de Expediente',baja:'🚪 Solicitud de Baja',seguimiento:'📊 Seguimiento de Ingresos',folios:'📁 Folios de Salida',base:'🗄️ Base de Datos',docs:'🖨️ Impresión de Documentos',usuarios:'👥 Usuarios',config:'⚙️ Catálogo',finiquitos:'💰 Finiquitos',incapacidades:'🏥 Incapacidades',pendientes:'📌 Pendientes'};
+const TABS_ADM = ['altas','baja','seguimiento','base','docs','finiquitos','incapacidades','usuarios','config','plantilla','pendientes'];
+const TAB_LABELS = {altas:'📋 Alta de Expediente',baja:'🚪 Solicitud de Baja',seguimiento:'📊 Seguimiento de Ingresos',folios:'📁 Folios de Salida',base:'🗄️ Base de Datos',docs:'🖨️ Impresión de Documentos',usuarios:'👥 Usuarios',config:'⚙️ Catálogo',finiquitos:'💰 Finiquitos',incapacidades:'🏥 Incapacidades',pendientes:'📌 Pendientes',plantilla:'🏢 Plantilla'};
 function _penTabLabel(){
   const n=_penCountNuevos();
   return n>0
@@ -335,6 +335,7 @@ let currentTab='altas', currentType='semanal', isAdmin=false;
 let currentRole='generalista'; // 'generalista' | 'admin' | 'reclutador'
 let currentUser=null; // {nombre, usuario, rol} del usuario logueado
 let db=[], seguimientos=[], foliosData={}, bajaColaborador=null, finiquitosDB=[];
+let plantillaDB={}; // { "Monterrey": { "Auxiliar de Operaciones": { cupo: 12, asignados: [{ numNomina, nombre }] } } }
 let _foliosOrden={col:'folio',dir:'desc'};
 let nomInput='', nssInput='';
 const today=new Date(); today.setHours(0,0,0,0);
@@ -525,6 +526,7 @@ async function loadData(){
   try{const v=localStorage.getItem('afimex-seguimientos');if(v)seguimientos=JSON.parse(v);}catch(e){seguimientos=[];}
   try{const v=localStorage.getItem('afimex-folios');if(v)foliosData=JSON.parse(v);}catch(e){foliosData={};}
   try{const v=localStorage.getItem('afimex-finiquitos');if(v)finiquitosDB=JSON.parse(v);}catch(e){finiquitosDB=[];}
+  try{const v=localStorage.getItem('afimex-plantilla');if(v)plantillaDB=JSON.parse(v);}catch(e){plantillaDB={};}
 
   // ── Migración automática: buscar datos en TODAS las claves de localStorage ──
   // Útil cuando se abre el archivo desde una ruta diferente (nueva versión)
@@ -649,7 +651,7 @@ async function sincronizarDesdeGSheets(){
     // Cargar cada hoja individualmente para evitar respuestas gigantes
     const hojas = [
       'Expedientes','Seguimiento','Folios','Finiquitos','Usuarios',
-      'SV_Folios','Folios_Manual','Incapacidades','Pendientes',
+      'SV_Folios','Folios_Manual','Incapacidades','Pendientes','Plantilla',
       'Cat_Nominas','Cat_IATA','Cat_Puestos','Cat_Posiciones',
       'Cat_Direcciones','Cat_Actividades','Cat_Prestaciones',
       'Cat_DocFiniq','Cat_RegPatronal','Cat_Salarios'
@@ -690,6 +692,9 @@ async function sincronizarDesdeGSheets(){
 
     const pen = resultados['Pendientes'];
     if(pen && pen.length > 0){ pendientesDB = pen; localStorage.setItem('afimex-pendientes', JSON.stringify(pendientesDB)); }
+
+    const pla = resultados['Plantilla'];
+    if(pla && typeof pla==='object' && Object.keys(pla).length > 0){ plantillaDB = pla; localStorage.setItem('afimex-plantilla', JSON.stringify(plantillaDB)); }
 
     // ── Aplicar catálogos ──
     const nom = resultados['Cat_Nominas'];
@@ -773,6 +778,12 @@ async function syncFoliosManual(){
   if(!tieneGSheets()){ setSyncStatus('local'); return; }
   setSyncStatus('saving');
   try{ if(lista.length>0) await jsonpSend('Folios_Manual', lista); setSyncStatus('ok'); }catch(e){ setSyncStatus('error'); }
+}
+async function syncPlantilla(){
+  localStorage.setItem('afimex-plantilla', JSON.stringify(plantillaDB));
+  if(!tieneGSheets()){ setSyncStatus('local'); return; }
+  setSyncStatus('saving');
+  try{ await jsonpSend('Plantilla', plantillaDB); setSyncStatus('ok'); }catch(e){ setSyncStatus('error'); }
 }
 
 // Alias compatibles con llamadas existentes
@@ -2803,7 +2814,7 @@ function render(){
     mostrarLoginInicial();
     return;
   }
-  const map={altas:altasHTML,baja:bajaHTML,seguimiento:seguimientoHTML,folios:currentRole==='generalista'?foliosVistaHTML:foliosHTML,base:baseHTML,docs:docsHTML,config:configHTML,finiquitos:finiquitosHTML,incapacidades:incapacidadesHTML,pendientes:pendientesHTML,usuarios:()=>'<div id="usuarios-loading" style="padding:20px;color:var(--text2)">Cargando...</div>'};
+  const map={altas:altasHTML,baja:bajaHTML,seguimiento:seguimientoHTML,folios:currentRole==='generalista'?foliosVistaHTML:foliosHTML,base:baseHTML,docs:docsHTML,config:configHTML,finiquitos:finiquitosHTML,incapacidades:incapacidadesHTML,pendientes:pendientesHTML,plantilla:plantillaHTML,usuarios:()=>'<div id="usuarios-loading" style="padding:20px;color:var(--text2)">Cargando...</div>'};
   const _roleTabsR = currentRole==='admin' ? TABS_ADM :
                      currentRole==='generalista' ? TABS_GEN :
                      currentRole==='reclutador' ? TABS_REC :
@@ -3113,6 +3124,21 @@ async function guardarAlta(e){
     showToast('Error validando NSS','#dc2626'); return;
   }
 
+  // ── Validar plantilla ────────────────────────────────────────────────────
+  if(data.oficina && data.puesto){
+    const _of = data.oficina;
+    const _pu = data.puesto;
+    const _plOf = plantillaDB[_of];
+    if(_plOf && _plOf[_pu]){
+      const _cupo = _plOf[_pu].cupo || 0;
+      const _ocupados = (_plOf[_pu].asignados || []).filter(a=>a&&a.numNomina).length;
+      if(_cupo > 0 && _ocupados >= _cupo){
+        showToast('⛔ Plantilla llena — '+_pu+' en '+_of+' ('+_ocupados+'/'+_cupo+' lugares ocupados)','#dc2626');
+        return;
+      }
+    }
+  }
+
   // ── Guardar ─────────────────────────────────────────────────────────────
   try {
     data.numNomina = nomManual;
@@ -3133,6 +3159,8 @@ async function guardarAlta(e){
     }
     db.push(data);
     seguimientos.push({s1:false,s2:false,s3:false,comentario:'',estatus:'activo'});
+    // ── Asignar automáticamente en plantilla si existe la posición ──
+    plantillaAsignarEmpleado(data.oficina, data.puesto, data.numNomina, data.nombre);
     await saveDB();
     await saveSeg();
     lastSaved = db[db.length-1];
@@ -3178,6 +3206,8 @@ async function guardarBaja(){
     db[idx].estatus='baja';db[idx].fechaBaja=fechaBaja;db[idx].folio=folio;
     if(!seguimientos[idx])seguimientos[idx]={s1:false,s2:false,s3:false,comentario:'',estatus:'activo'};
     seguimientos[idx].estatus='baja';
+    // ── Liberar posición en plantilla automáticamente ──
+    plantillaLiberarEmpleado(bajaColaborador.oficina, bajaColaborador.puesto, bajaColaborador.numNomina);
     await saveDB();await saveSeg();await saveFolios();
   }
   if(window._bajaTipo==='SV'&&window._bajaSVFolio){
@@ -3207,6 +3237,10 @@ async function guardarBaja(){
 
   window._bajaTipo=null;window._bajaSVFolio=null;
   showToast(`✓ Baja registrada — Folio: ${folio}${_svTag}`,'#16a34a');
+  // ── Aviso si fue baja manual: recordar liberar plantilla ──
+  if(_isManual){
+    setTimeout(()=>showToast('⚠ Baja manual: recuerda liberar la posición en la pestaña Plantilla','#f59e0b'), 3500);
+  }
   setTimeout(()=>printBaja(_printRec),400);
   bajaColaborador=null;
   if(_isManual) window._bajaManual={};
@@ -9027,7 +9061,7 @@ function penAgregarComentario(id){
   // ── Auto-sync en background cada 10 minutos ──────────────────
   // Descarga solo datos operativos silenciosamente y aplica cambios si hay novedades
   if(tieneGSheets()){
-    const AUTOSYNC_HOJAS = ['Expedientes','Seguimiento','Incapacidades','Pendientes','Finiquitos','SV_Folios','Folios_Manual','Folios'];
+    const AUTOSYNC_HOJAS = ['Expedientes','Seguimiento','Incapacidades','Pendientes','Finiquitos','SV_Folios','Folios_Manual','Folios','Plantilla'];
     async function autoSyncBackground(){
       try{
         let huboCambios = false;
@@ -9061,6 +9095,8 @@ function penAgregarComentario(id){
               if(!foliosData[iata] || n > foliosData[iata]) foliosData[iata] = n;
             });
             localStorage.setItem('afimex-folios', JSON.stringify(foliosData));
+          } else if(hoja==='Plantilla' && datos && typeof datos==='object' && Object.keys(datos).length>0){
+            plantillaDB = datos; localStorage.setItem('afimex-plantilla', JSON.stringify(plantillaDB));
           }
         }
         if(huboCambios){
@@ -9078,6 +9114,348 @@ function penAgregarComentario(id){
     setInterval(autoSyncBackground, 10 * 60 * 1000);
   }
 })();
+
+// ═══════════════════════════════════════════════════════════════════════════
+// MÓDULO PLANTILLA
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ── Helpers ────────────────────────────────────────────────────────────────
+function plantillaGetCupo(oficina, puesto){
+  return (plantillaDB[oficina]&&plantillaDB[oficina][puesto]&&plantillaDB[oficina][puesto].cupo)||0;
+}
+function plantillaGetAsignados(oficina, puesto){
+  return (plantillaDB[oficina]&&plantillaDB[oficina][puesto]&&plantillaDB[oficina][puesto].asignados)||[];
+}
+function plantillaOcupados(oficina, puesto){
+  return plantillaGetAsignados(oficina,puesto).filter(a=>a&&a.numNomina).length;
+}
+function plantillaDisponibles(oficina, puesto){
+  const c=plantillaGetCupo(oficina,puesto);
+  return c>0 ? Math.max(0,c-plantillaOcupados(oficina,puesto)) : null;
+}
+function plantillaAsignarEmpleado(oficina, puesto, numNomina, nombre){
+  if(!oficina||!puesto||!numNomina) return;
+  if(!plantillaDB[oficina]) return; // Solo asignar si la oficina tiene plantilla definida
+  if(!plantillaDB[oficina][puesto]) return; // Solo si el puesto existe en plantilla
+  const lista = plantillaDB[oficina][puesto].asignados = plantillaDB[oficina][puesto].asignados||[];
+  // No duplicar
+  if(lista.find(a=>a.numNomina===numNomina)) return;
+  lista.push({numNomina, nombre});
+  localStorage.setItem('afimex-plantilla',JSON.stringify(plantillaDB));
+  syncPlantilla();
+}
+function plantillaLiberarEmpleado(oficina, puesto, numNomina){
+  if(!oficina||!puesto||!numNomina) return;
+  if(!plantillaDB[oficina]||!plantillaDB[oficina][puesto]) return;
+  const lista = plantillaDB[oficina][puesto].asignados||[];
+  plantillaDB[oficina][puesto].asignados = lista.filter(a=>a.numNomina!==numNomina);
+  localStorage.setItem('afimex-plantilla',JSON.stringify(plantillaDB));
+  syncPlantilla();
+}
+
+// ── Carga inicial de empleados activos en plantilla desde el xlsx ──────────
+// Se llama una sola vez desde el módulo para importar los 336 activos
+const PLANTILLA_ACTIVOS_SEED = [{"numNomina": 1, "nombre": "ESCOBEDO AVALOS MERCED", "oficina": "Operaciones", "puesto": "Coordinador De Operaciones"}, {"numNomina": 2, "nombre": "ARAMBULA SANCHEZ DANIEL", "oficina": "Monterrey", "puesto": "Auxiliar de Operaciones"}, {"numNomina": 6, "nombre": "BARRON SANCHEZ CECILIA", "oficina": "Call Center", "puesto": "Ejecutivo de Call Center"}, {"numNomina": 8, "nombre": "MIRELES QUINTERO SALVADOR", "oficina": "Operaciones", "puesto": "Coordinador De Operaciones"}, {"numNomina": 12, "nombre": "BARRON HERNANDEZ MARIO", "oficina": "CEDIS", "puesto": "Limpieza"}, {"numNomina": 18, "nombre": "NUÑEZ MALDONADO KARINA ANGELICA", "oficina": "Call Center", "puesto": "Supervisor de Call Center"}, {"numNomina": 30, "nombre": "HERRERA LOPEZ ALEJANDRO", "oficina": "Operaciones", "puesto": "Jefe De Circuitos"}, {"numNomina": 33, "nombre": "LADRON DE GUEVARA ULIBARRI LEOPOLDO", "oficina": "CD Victoria", "puesto": "Vendedor Mostrador"}, {"numNomina": 42, "nombre": "ROLDAN FERNANDEZ ELISEO", "oficina": "Administración", "puesto": "Ingresos"}, {"numNomina": 50, "nombre": "LOPEZ SANCHEZ CESAR ABRAHAM", "oficina": "CD Victoria", "puesto": "Operador Local"}, {"numNomina": 55, "nombre": "VALLEJO CASTRO MAYRA ALEJANDRA", "oficina": "Administración", "puesto": "Facturación"}, {"numNomina": 56, "nombre": "MONTALVO ZAPATA OSCAR DAVID", "oficina": "Torreón", "puesto": "Operador Local"}, {"numNomina": 70, "nombre": "ENRIQUEZ DE LA ROSA ALBERTO RAMON", "oficina": "CD Victoria", "puesto": "Vendedor Mostrador"}, {"numNomina": 74, "nombre": "MARTINEZ RODRIGUEZ JUAN FIDENCIO", "oficina": "Mantenimiento", "puesto": "Hojalatero"}, {"numNomina": 109, "nombre": "GARCIA LEAL CESAR ELIUD", "oficina": "CEDIS", "puesto": "Supervisor De Operaciones"}, {"numNomina": 121, "nombre": "MARQUEZ ALBA NANCY GUADALUPE", "oficina": "CD Victoria", "puesto": "Jefe De Oficina"}, {"numNomina": 127, "nombre": "GONZALEZ LOZANO MONTSERRAT", "oficina": "Dirección", "puesto": "Director"}, {"numNomina": 143, "nombre": "URIBE RENTERIA JUAN JOSE", "oficina": "Torreón", "puesto": "Supervisor De Operaciones"}, {"numNomina": 154, "nombre": "VAZQUEZ CASTILLO VICTOR MAURICIO", "oficina": "CD Victoria", "puesto": "Operador Local"}, {"numNomina": 193, "nombre": "HERNANDEZ DAVALOS NORMA VERONICA", "oficina": "Mantenimiento", "puesto": "Controlista De Mantenimiento"}, {"numNomina": 237, "nombre": "CARBAJAL RIVERA SUGEY GUADALUPE", "oficina": "Tampico", "puesto": "Supervisor De Operaciones"}, {"numNomina": 269, "nombre": "OJEDA TORRES OSCAR RAMIRO", "oficina": "Monclova", "puesto": "Operador Local"}, {"numNomina": 312, "nombre": "CHAVEZ IBARRA PABLO", "oficina": "Porteo", "puesto": "Supervisor de Call Center"}, {"numNomina": 316, "nombre": "ESQUIVEL MORALES ERIKA BELEN", "oficina": "Porteo", "puesto": "Ejecutivo de Call Center"}, {"numNomina": 327, "nombre": "MENDOZA SIERRA FIDEL", "oficina": "Porteo", "puesto": "Operador Local"}, {"numNomina": 399, "nombre": "MARTINEZ PADRON MARIA DE LOS ANGELES", "oficina": "Call Center", "puesto": "Ejecutivo de televentas"}, {"numNomina": 420, "nombre": "VALDEZ LOERA RODOLFO", "oficina": "Monterrey", "puesto": "Vendedor Mostrador"}, {"numNomina": 437, "nombre": "FLORES DE LEON ELSA VIRIDIANA", "oficina": "Piedras Negras", "puesto": "Jefe De Oficina"}, {"numNomina": 467, "nombre": "GRANADOS MARTINEZ LEOBARDO", "oficina": "Porteo", "puesto": "Operador Local"}, {"numNomina": 495, "nombre": "JUAREZ MENDOZA JAIME ALEJANDRO", "oficina": "Monterrey", "puesto": "Operador Local Recolecciones"}, {"numNomina": 519, "nombre": "GARCIA OVALLE JOSE ADRIAN", "oficina": "Monterrey", "puesto": "Operador Ruta Extendida"}, {"numNomina": 542, "nombre": "MARTINEZ RIVAS ALBERTO", "oficina": "Torreón", "puesto": "Operador Local"}, {"numNomina": 613, "nombre": "BOCANEGRA MARTINEZ ARLETE SUJEY", "oficina": "Call Center", "puesto": "Ejecutivo de Call Center"}, {"numNomina": 635, "nombre": "GONZALEZ SEGURA JOSE ALEJANDRO", "oficina": "Monterrey", "puesto": "Supervisor De Operaciones"}, {"numNomina": 644, "nombre": "GARCIA GARCIA JESUS", "oficina": "Monterrey", "puesto": "Supervisor De Operaciones"}, {"numNomina": 711, "nombre": "GOMEZ GUERRERO RAMON", "oficina": "Monterrey", "puesto": "Operador Local Entregas"}, {"numNomina": 718, "nombre": "MENDOZA RAMOS NORBERTO", "oficina": "Porteo", "puesto": "Operador Local"}, {"numNomina": 766, "nombre": "VALLEJO AGUILA PEDRO ROBERTO", "oficina": "TI", "puesto": "Gerente"}, {"numNomina": 769, "nombre": "CHAO AGUILAR JORGE ANGEL", "oficina": "TI", "puesto": "Programación Y Desarrollo Web"}, {"numNomina": 770, "nombre": "GONZALEZ LOZANO SOFIA", "oficina": "Dirección", "puesto": "Director"}, {"numNomina": 852, "nombre": "HUERTA CASTAÑEDA JORGE MIGUEL", "oficina": "Matamoros", "puesto": "Operador Local"}, {"numNomina": 896, "nombre": "NAVARRETE AHUMADA JORGE ENRIQUE", "oficina": "Tampico", "puesto": "Operador Local"}, {"numNomina": 902, "nombre": "RAMIREZ SALINAS ANA LAURA", "oficina": "Mejora Continua", "puesto": "Gerente De Mejora Continua"}, {"numNomina": 926, "nombre": "GOMEZ SALDAÑA ADRIAN", "oficina": "Seguridad Vial", "puesto": "Coordinador de Monitoreo"}, {"numNomina": 944, "nombre": "MONTEMAYOR RAMOS OSCAR MISAEL", "oficina": "Monclova", "puesto": "Jefe De Oficina"}, {"numNomina": 1012, "nombre": "GUERRERO MONTOYA JOSE ARTURO", "oficina": "CD Valles", "puesto": "Operador Local"}, {"numNomina": 1015, "nombre": "IZAGUIRRE RODRIGUEZ GAEL", "oficina": "Matamoros", "puesto": "Jefe De Oficina"}, {"numNomina": 1033, "nombre": "PAISANO FABELA NOE", "oficina": "Monterrey", "puesto": "Operador Local Recolecciones"}, {"numNomina": 1039, "nombre": "DE LA CRUZ MARTINEZ NALLELY", "oficina": "Tampico", "puesto": "Supervisor De Operaciones"}, {"numNomina": 1097, "nombre": "MORENO RODRIGUEZ KARINA LIZETH", "oficina": "Operaciones", "puesto": "Jefe Regional De Operaciones"}, {"numNomina": 1112, "nombre": "REQUENES ABRAMO FABIAN", "oficina": "Operaciones", "puesto": "Jefe De Crecimiento Y Consesio"}, {"numNomina": 1122, "nombre": "HERNANDEZ GUTIERREZ CESAR FERNANDO", "oficina": "Ventas", "puesto": "Jefe Comercial Afimex"}, {"numNomina": 1124, "nombre": "ESPARZA AJUNTAS ISIDRO", "oficina": "Piedras Negras", "puesto": "Operador Ruta Extendida"}, {"numNomina": 1131, "nombre": "PEÑA IBARRA FELIX", "oficina": "Matamoros", "puesto": "Operador Local"}, {"numNomina": 1142, "nombre": "CAZARES ESPARZA GUILLERMO", "oficina": "Chihuahua", "puesto": "Operador Local"}, {"numNomina": 1146, "nombre": "GARCIA AGUIRRE AMERICO", "oficina": "Reynosa", "puesto": "Operador Local"}, {"numNomina": 1147, "nombre": "CASTRO TAMEZ ELIUD ISAI", "oficina": "Ventas", "puesto": "Ejecutivo cuenta clave"}, {"numNomina": 1177, "nombre": "GARZA PARDO JESUS ARNULFO", "oficina": "TI", "puesto": "Programación Y Desarrollo Web"}, {"numNomina": 1208, "nombre": "ORTA CARO ALEJANDRO", "oficina": "Delicias", "puesto": "Jefe De Oficina"}, {"numNomina": 1214, "nombre": "GUZMAN ARRIAGA LUIS FEDERICO", "oficina": "San Luis Potosí", "puesto": "Operador Local"}, {"numNomina": 1232, "nombre": "FLORES RIVERA ENRIQUE JIBRAM", "oficina": "Administración", "puesto": "Auxiliar Contable"}, {"numNomina": 1290, "nombre": "CAMACHO SINALOA MARISOL", "oficina": "Cuauhtémoc", "puesto": "Vendedor Mostrador"}, {"numNomina": 1319, "nombre": "BARRERA MARTINEZ LUIS ALFREDO", "oficina": "Parral", "puesto": "Operador Local ML"}, {"numNomina": 1358, "nombre": "MAGALLANES SALAS JOSE ALBERTO", "oficina": "Recursos Humanos", "puesto": "Coordinador De Nóminas"}, {"numNomina": 1396, "nombre": "MEDINA VILLA JORGE ALFREDO", "oficina": "Parral", "puesto": "Operador Local"}, {"numNomina": 1413, "nombre": "CAMERO CAMARILLO JUAN CARLOS", "oficina": "CEDIS", "puesto": "Auxiliar de Plataforma"}, {"numNomina": 1419, "nombre": "ROBLES BELTRAN JORGE EDUARDO", "oficina": "Chihuahua", "puesto": "Operador Local"}, {"numNomina": 1426, "nombre": "OVIL JARA ANGELICA", "oficina": "Dirección", "puesto": "Limpieza"}, {"numNomina": 1439, "nombre": "BARRON GONZALEZ CARLOS ALBERTO", "oficina": "Porteo", "puesto": "Operador Ruta Extendida"}, {"numNomina": 1456, "nombre": "ESCOBEDO AVALOS PETRA YESENIA", "oficina": "Call Center", "puesto": "Ejecutivo de Call Center"}, {"numNomina": 1507, "nombre": "DIAZ BARRON JOSE ENRIQUE", "oficina": "CEDIS", "puesto": "Auxiliar de Operaciones"}, {"numNomina": 1553, "nombre": "ALMAZAN FLORES DIEGO ABELARDO", "oficina": "Administración", "puesto": "Cobranza"}, {"numNomina": 1567, "nombre": "MARTINEZ MACIEL FRANCISCO ALFREDO", "oficina": "Chihuahua", "puesto": "Jefe Regional De Operaciones"}, {"numNomina": 1596, "nombre": "BECERRA MONTOYA JESUS ALBERTO", "oficina": "Ventas", "puesto": "Auditor de Excedentes"}, {"numNomina": 1613, "nombre": "MEDINA VELA DANIELA LIZBETH", "oficina": "Matamoros", "puesto": "Vendedor Mostrador"}, {"numNomina": 1620, "nombre": "SOLIS MANCERA JOSE ALBERTO", "oficina": "Operaciones", "puesto": "Jefe Regional De Operaciones"}, {"numNomina": 1630, "nombre": "LOYA ARGUELLES JORGE ISAIAS", "oficina": "Cuauhtémoc", "puesto": "Supervisor De Operaciones"}, {"numNomina": 1648, "nombre": "SANCHEZ HERNANDEZ ROLANDO DANIEL", "oficina": "Cuauhtémoc", "puesto": "Operador Local ML"}, {"numNomina": 1678, "nombre": "DIEGO MARTINEZ GERARDO DANIEL", "oficina": "Operaciones", "puesto": "Coordinador De Circuitos"}, {"numNomina": 1680, "nombre": "ARENIVAS MOTA ELSA IRENE", "oficina": "Delicias", "puesto": "Operador Local ML"}, {"numNomina": 1682, "nombre": "BADILLO RODRIGUEZ PEDRO AGUSTIN", "oficina": "Monterrey", "puesto": "Operador Local"}, {"numNomina": 1698, "nombre": "PADILLA ESPARZA CARLOS WINNETOW", "oficina": "Monclova", "puesto": "Operador Local"}, {"numNomina": 1711, "nombre": "GONZALEZ CONTRERAS EDGAR JESUS", "oficina": "Torreón", "puesto": "Operador Local"}, {"numNomina": 1713, "nombre": "LARES ALANIS RAMON ANTONIO", "oficina": "Delicias", "puesto": "Operador Local ML"}, {"numNomina": 1740, "nombre": "HERNANDEZ TERRAZAS JUAN DANIEL", "oficina": "Cuauhtémoc", "puesto": "Operador Local ML"}, {"numNomina": 1746, "nombre": "RESENDIZ SALAZAR JOSE GUADALUPE", "oficina": "San Luis Potosí", "puesto": "Operador Local"}, {"numNomina": 1758, "nombre": "CARRILLO RAMOS FABIAN", "oficina": "Administración", "puesto": "Gerente"}, {"numNomina": 1761, "nombre": "CRUZ MARTINEZ JUAN", "oficina": "Reynosa", "puesto": "Operador Local"}, {"numNomina": 1775, "nombre": "MARTINEZ MIRELES JUAN CARLOS", "oficina": "CD Victoria", "puesto": "Operador Local"}, {"numNomina": 1776, "nombre": "MORENO RODRIGUEZ CYNDI DANIELA", "oficina": "Recursos Humanos", "puesto": "Chef Ejecutivo"}, {"numNomina": 1805, "nombre": "PALACIOS CASTAÑEDA RAMON", "oficina": "San Luis Potosí", "puesto": "Operador Local"}, {"numNomina": 1835, "nombre": "SANCHEZ RODRIGUEZ RAUL", "oficina": "Parral", "puesto": "Operador Local ML"}, {"numNomina": 1858, "nombre": "MORENO GAONA HERIBERTO DE JESUS", "oficina": "Monterrey", "puesto": "Operador Local Recolecciones"}, {"numNomina": 1883, "nombre": "AGUIAR RODRIGUEZ JOSE ALFREDO", "oficina": "CD Victoria", "puesto": "Operador Local"}, {"numNomina": 1887, "nombre": "CARNERO ORTIZ AUDREY ISMARA", "oficina": "Chihuahua", "puesto": "Supervisor De Operaciones"}, {"numNomina": 1896, "nombre": "AVILES MENDEZ EUSEBIO JESUS", "oficina": "Tampico", "puesto": "Operador Local"}, {"numNomina": 1897, "nombre": "DIAZ MARTINEZ OSCAR ANTONIO", "oficina": "Parral", "puesto": "Operador Local ML"}, {"numNomina": 1906, "nombre": "GONZALEZ LOPEZ JENNIFER JANETH", "oficina": "Administración", "puesto": "Jefe De Tesorería"}, {"numNomina": 1917, "nombre": "HERNANDEZ NAVARRO JUAN ENRIQUE", "oficina": "Porteo", "puesto": "Operador Local"}, {"numNomina": 1924, "nombre": "GARCIA ESCAREÑO JESUS ARTURO", "oficina": "Ventas", "puesto": "Ejecutivo De Ventas"}, {"numNomina": 1929, "nombre": "FRANCO MARES ULISES", "oficina": "Piedras Negras", "puesto": "Operador Local"}, {"numNomina": 1945, "nombre": "LOPEZ TORRES MAYRA ABIGAIL", "oficina": "Parral", "puesto": "Jefe De Oficina"}, {"numNomina": 1967, "nombre": "LICERIO GARAY MARCO CESAR", "oficina": "Torreón", "puesto": "Supervisor De Operaciones"}, {"numNomina": 1990, "nombre": "ESCOBAR BARRERA ERIK", "oficina": "Piedras Negras", "puesto": "Operador Ruta Extendida"}, {"numNomina": 2002, "nombre": "SALAZAR CARDENAS PERLA JOSELYN", "oficina": "Reynosa", "puesto": "Supervisor De Operaciones"}, {"numNomina": 2069, "nombre": "AGUILAR BARRAGAN OMAR EDUARDO", "oficina": "CD Valles", "puesto": "Operador Local"}, {"numNomina": 2094, "nombre": "LOPEZ GUTIERREZ JOSE GABRIEL", "oficina": "Ventas", "puesto": "Ejecutivo De Ventas"}, {"numNomina": 2095, "nombre": "MOLINA LOPEZ JOEL ALEJANDRO", "oficina": "Monterrey", "puesto": "Operador Local Recolecciones"}, {"numNomina": 2097, "nombre": "RODRIGUEZ TORRES AIDE LIZETT", "oficina": "CD Valles", "puesto": "Vendedor Mostrador"}, {"numNomina": 2103, "nombre": "GARCIA JOSE DAVID", "oficina": "CD Juárez", "puesto": "Operador Local"}, {"numNomina": 2136, "nombre": "RODRIGUEZ GARCIA JUAN ISAIAS", "oficina": "Reynosa", "puesto": "Operador Local"}, {"numNomina": 2141, "nombre": "CHAVEZ FLORES JONATAN ELOY", "oficina": "Recursos Humanos", "puesto": "Jefe De Nóminas"}, {"numNomina": 2164, "nombre": "GONZALEZ HERNANDEZ JAIR", "oficina": "Ventas", "puesto": "Ejecutivo cuenta clave"}, {"numNomina": 2165, "nombre": "CELEDONIO GARCIA PEDRO IVAN", "oficina": "León", "puesto": "Jefe De Oficina"}, {"numNomina": 2167, "nombre": "BACA MORALES NELSY GUADALUPE", "oficina": "Cuauhtémoc", "puesto": "Operador Local ML"}, {"numNomina": 2171, "nombre": "GUTIERREZ MAYORGA ADRIAN GUADALUPE", "oficina": "Monterrey", "puesto": "Jefe De Oficina"}, {"numNomina": 2176, "nombre": "TREJO BOCANEGRA MIGUEL ANGEL", "oficina": "Tampico", "puesto": "Operador Local"}, {"numNomina": 2191, "nombre": "VILLAFAÑA SAAVEDRA LUIS EDUARDO", "oficina": "León", "puesto": "Operador Local"}, {"numNomina": 2219, "nombre": "GARCIA LICON JORGE ANTONIO", "oficina": "Operaciones", "puesto": "Gerente Unidad De Negocios"}, {"numNomina": 2225, "nombre": "BANDA HERNANDEZ ABISAG TABITA", "oficina": "Nuevo Laredo", "puesto": "Jefe De Oficina"}, {"numNomina": 2241, "nombre": "ESCOBEDO MENDOZA LUIS ANGEL", "oficina": "León", "puesto": "Operador Local"}, {"numNomina": 2247, "nombre": "PEREYRA GALVAN MIGUEL ANGEL", "oficina": "Parral", "puesto": "Operador Local ML"}, {"numNomina": 2249, "nombre": "MARTINEZ CARRILLO FELIX ISRAEL", "oficina": "Reynosa", "puesto": "Jefe De Oficina"}, {"numNomina": 2258, "nombre": "BASURTO FERNANDEZ CARLOS JAVIER", "oficina": "Chihuahua", "puesto": "Operador Local"}, {"numNomina": 2264, "nombre": "CARMONA PEREZ AARON", "oficina": "Cuauhtémoc", "puesto": "Operador Local ML"}, {"numNomina": 2271, "nombre": "LOPEZ GONZALEZ CESAR ALFREDO", "oficina": "Cuauhtémoc", "puesto": "Operador Local ML"}, {"numNomina": 2273, "nombre": "BUSTILLOS SOLANO JESUS ALONSO", "oficina": "Cuauhtémoc", "puesto": "Jefe De Oficina"}, {"numNomina": 2297, "nombre": "MELGOZA PALACIOS ANGEL RAYMUNDO", "oficina": "Monterrey", "puesto": "Operador Local Recolecciones"}, {"numNomina": 2303, "nombre": "CARDENAS GRANADOS JOSE FRANCISCO", "oficina": "Mantenimiento", "puesto": "Mecanico B"}, {"numNomina": 2308, "nombre": "ALANIS AGUILAR EDGAR", "oficina": "Monterrey", "puesto": "Operador Local Recolecciones"}, {"numNomina": 2319, "nombre": "CAMPOS ACOSTA JESUS ARMANDO", "oficina": "Piedras Negras", "puesto": "Operador Local"}, {"numNomina": 2321, "nombre": "PULIDO LOPEZ MIGUEL ANGEL", "oficina": "Administración", "puesto": "Chofer Administrativo"}, {"numNomina": 2324, "nombre": "HERNANDEZ ESCOBAR ALONSO", "oficina": "Parral", "puesto": "Operador Local ML"}, {"numNomina": 2329, "nombre": "PACHECO MIRABAL GIL ANTONIO", "oficina": "Ventas", "puesto": "Ejecutivo De Ventas"}, {"numNomina": 2331, "nombre": "RANGEL RAMIREZ CESAR RICARDO", "oficina": "Ventas", "puesto": "Ejecutivo De Ventas"}, {"numNomina": 2339, "nombre": "ESQUIVEL AYALA JOSE ANGEL", "oficina": "Administración", "puesto": "Auxiliar Administrativo"}, {"numNomina": 2340, "nombre": "CESAR MURILLO OMAR EDUARDO", "oficina": "Seguridad Vial", "puesto": "Jefe De Seguridad Vial"}, {"numNomina": 2341, "nombre": "TRIANO DOMINGUEZ SANTANA", "oficina": "Chihuahua", "puesto": "Operador Local"}, {"numNomina": 2343, "nombre": "ZAPOTITLA ALVARADO JONATHAN", "oficina": "Tampico", "puesto": "Operador Local"}, {"numNomina": 2347, "nombre": "RODRIGUEZ GUTIERREZ ABEL", "oficina": "Monterrey", "puesto": "Auxiliar de Operaciones"}, {"numNomina": 2361, "nombre": "TOVAR MARTINEZ JOSUE FEDERICO", "oficina": "Nuevo Laredo", "puesto": "Supervisor De Operaciones"}, {"numNomina": 2362, "nombre": "SEGOVIA TALAMANTES JAEL JEMIMA", "oficina": "Monclova", "puesto": "Vendedor Mostrador"}, {"numNomina": 2366, "nombre": "INFANTE VILLASANA JUAN JESUS", "oficina": "CEDIS", "puesto": "Auxiliar de Operaciones"}, {"numNomina": 2369, "nombre": "HINOJOS NAVARRETE RAUL ARTURO", "oficina": "Delicias", "puesto": "Operador Local"}, {"numNomina": 2371, "nombre": "HINOJOS PAREDES ADRIAN", "oficina": "Parral", "puesto": "Auxiliar de Operaciones"}, {"numNomina": 2373, "nombre": "RODRIGUEZ MUÑIZ RAMON", "oficina": "Reynosa", "puesto": "Operador Local"}, {"numNomina": 2381, "nombre": "CHICO BECERRA BRANDON IRAM", "oficina": "CD Juárez", "puesto": "Operador Local"}, {"numNomina": 2385, "nombre": "PERALES ALVAREZ HECTOR DE JESUS", "oficina": "CD Victoria", "puesto": "Dispatcher"}, {"numNomina": 2402, "nombre": "DE JESUS NABOR ALEXIS", "oficina": "Chihuahua", "puesto": "Ejecutivo De Operaciones"}, {"numNomina": 2411, "nombre": "DAVILA RAMIREZ JOSE HOMERO", "oficina": "Monterrey", "puesto": "Auxiliar de Operaciones"}, {"numNomina": 2424, "nombre": "CRUZ RODRIGUEZ VICTORIA", "oficina": "Combustibles", "puesto": "Coordinador De Control De Combustible"}, {"numNomina": 2430, "nombre": "ESPINOZA MIRELES RAUL ALBERTO", "oficina": "Piedras Negras", "puesto": "Operador Local"}, {"numNomina": 2432, "nombre": "MENDOZA VAZQUEZ EDGAR ALEJANDRO", "oficina": "CD Victoria", "puesto": "Operador Local ML"}, {"numNomina": 2439, "nombre": "GARCIA RODRIGUEZ LAURA ALICIA", "oficina": "Linares", "puesto": "Jefe De Oficina"}, {"numNomina": 2447, "nombre": "POLO BARRON CESAR ADAN", "oficina": "Tampico", "puesto": "Operador Local"}, {"numNomina": 2452, "nombre": "AGUILAR GARCIA MARTIN EDUARDO", "oficina": "CD Victoria", "puesto": "Operador Local ML"}, {"numNomina": 2453, "nombre": "MARTINEZ MELGAREJO LUIS ENRIQUE", "oficina": "CD Valles", "puesto": "Operador Local"}, {"numNomina": 2460, "nombre": "CASTAN SALINAS SERGIO", "oficina": "Tampico", "puesto": "Operador Local"}, {"numNomina": 2463, "nombre": "JUAREZ LOPEZ ALEJANDRA ELIZABETH", "oficina": "Call Center", "puesto": "Ejecutivo de televentas"}, {"numNomina": 2464, "nombre": "CUELLAR MACIAS JUAN ANTONIO", "oficina": "Saltillo", "puesto": "Operador Local"}, {"numNomina": 2467, "nombre": "RODRIGUEZ DE LA CRUZ JOSE RICARDO", "oficina": "Monterrey", "puesto": "Operador Local Recolecciones"}, {"numNomina": 2470, "nombre": "GUTIERREZ FLORES JULIO CESAR", "oficina": "Monterrey", "puesto": "Operador Local"}, {"numNomina": 2471, "nombre": "MORENO CARDENAS PEDRO NORBERTO", "oficina": "Ventas", "puesto": "Gerente De Ventas"}, {"numNomina": 2477, "nombre": "URIBE RAMIREZ CESAR OCTAVIO NETZAHUALCOYOTL", "oficina": "Nuevo Laredo", "puesto": "Operador Local"}, {"numNomina": 2479, "nombre": "HERNANDEZ ALFARO LUIS FERNANDO", "oficina": "Monterrey", "puesto": "Auxiliar de Operaciones"}, {"numNomina": 2494, "nombre": "ROBLEDO LILI ACSA ZURISADDAI", "oficina": "Operaciones", "puesto": "Jefe De Circuitos"}, {"numNomina": 2498, "nombre": "ESPINOZA SANCHEZ YADIRA", "oficina": "Recursos Humanos", "puesto": "Auxiliar de Limpieza"}, {"numNomina": 2505, "nombre": "MARTINEZ PEREZ MARTIN", "oficina": "Torreón", "puesto": "Operador Local"}, {"numNomina": 2506, "nombre": "LOPEZ SALAZAR ANDRES RICARDO", "oficina": "Reynosa", "puesto": "Operador Local"}, {"numNomina": 2507, "nombre": "DUEÑEZ RAMIREZ ALEJANDRO", "oficina": "Torreón", "puesto": "Operador Local"}, {"numNomina": 2508, "nombre": "CASTAÑEDA AGUERO KARLA IVONNE", "oficina": "Torreón", "puesto": "Vendedor Mostrador"}, {"numNomina": 2520, "nombre": "GONZALEZ BLANCO CINTHIA LIZETH", "oficina": "Call Center", "puesto": "Ejecutivo de Call Center"}, {"numNomina": 2522, "nombre": "MARQUEZ CHAVEZ JESUS ANTONIO", "oficina": "Cuauhtémoc", "puesto": "Operador Local"}, {"numNomina": 2525, "nombre": "DE JESUS FLORES GUSTAVO ANGEL", "oficina": "Monterrey", "puesto": "Auxiliar de Operaciones"}, {"numNomina": 2530, "nombre": "VALDEZ ULLOA RAFAEL", "oficina": "Torreón", "puesto": "Jefe De Oficina"}, {"numNomina": 2533, "nombre": "HERNANDEZ SANTOS EDSON ABNER", "oficina": "Monclova", "puesto": "Operador Local"}, {"numNomina": 2536, "nombre": "IBARRA GONZALEZ MIGUEL ANGEL", "oficina": "Tampico", "puesto": "Operador Local"}, {"numNomina": 2538, "nombre": "GRANADOS HERMOSILLO SAUL ADRIEL", "oficina": "Delicias", "puesto": "Operador Local ML"}, {"numNomina": 2540, "nombre": "AREVALO MORENO DIANA SILVIA", "oficina": "Monterrey", "puesto": "Vendedor Mostrador"}, {"numNomina": 2541, "nombre": "RAMIREZ NIÑO JAVIER ALEJANDRO", "oficina": "TI", "puesto": "Soporte Técnico"}, {"numNomina": 2555, "nombre": "GONZALEZ ZAVALA ALFREDO ALEJANDRO", "oficina": "Porteo", "puesto": "Jefe De Oficina"}, {"numNomina": 2556, "nombre": "CONSTANTINO MORENO ERICK", "oficina": "Ventas", "puesto": "Ejecutivo De Ventas"}, {"numNomina": 2560, "nombre": "MORENO FELIX PEDRO SANTIAGO", "oficina": "Matamoros", "puesto": "Operador Local"}, {"numNomina": 2561, "nombre": "SORIA JASSO AUDEL", "oficina": "Matamoros", "puesto": "Operador Local"}, {"numNomina": 2562, "nombre": "MENDOZA RUBIO ORIEL ANGEL", "oficina": "Seguridad Vial", "puesto": "Guardia"}, {"numNomina": 2564, "nombre": "ESPINO GARCIA MARIA DE LOS ANGELES", "oficina": "Cuauhtémoc", "puesto": "Operador Local"}, {"numNomina": 2606, "nombre": "MOLINA ZARATE ALFREDO", "oficina": "Tampico", "puesto": "Operador Local"}, {"numNomina": 2609, "nombre": "DE HOYOS MARTINEZ HECTOR", "oficina": "Mejora Continua", "puesto": "Analista de Mejora Continua"}, {"numNomina": 2612, "nombre": "MARTINEZ LOZANO CARLOS BRAYAN", "oficina": "Administración", "puesto": "Analista COD"}, {"numNomina": 2619, "nombre": "MARTINEZ CASARIN OSCAR", "oficina": "Monterrey", "puesto": "Operador Local Recolecciones"}, {"numNomina": 2624, "nombre": "SAUCEDO SANCHEZ MARIO", "oficina": "Reynosa", "puesto": "Operador Local"}, {"numNomina": 2632, "nombre": "GOMEZ CRUZ JORGE LUIS", "oficina": "Monterrey", "puesto": "Operador Local"}, {"numNomina": 2634, "nombre": "ZARATE HERNANDEZ YAIR RENATO", "oficina": "Mantenimiento", "puesto": "Mecanico A"}, {"numNomina": 2639, "nombre": "CORTES REAZOLA JOSE LUIS", "oficina": "CD Valles", "puesto": "Operador Local"}, {"numNomina": 2644, "nombre": "JUAREZ ZAVALA NIRVANA ESTEFANIA", "oficina": "Administración", "puesto": "Auxiliar Contable"}, {"numNomina": 2654, "nombre": "MEDINA CORONADO JONATHAN EZEQUIEL", "oficina": "Monterrey", "puesto": "Auxiliar de Operaciones"}, {"numNomina": 2656, "nombre": "BARRAZA OLVERA CARLOS AARON", "oficina": "CD Juárez", "puesto": "Operador Local"}, {"numNomina": 2658, "nombre": "CRUZ FRANCO JUAN JESUS", "oficina": "Administración", "puesto": "Analista COD"}, {"numNomina": 2662, "nombre": "ORTEGA ANAYA PABLO", "oficina": "Monterrey", "puesto": "Operador Local"}, {"numNomina": 2665, "nombre": "AVILA OVALLE JAIR ALEJANDRO", "oficina": "León", "puesto": "Vendedor Mostrador"}, {"numNomina": 2666, "nombre": "REYNA GOMEZ JOSE LUIS", "oficina": "Monterrey", "puesto": "Vendedor Mostrador"}, {"numNomina": 2667, "nombre": "MUÑOZ MIRAMONTES ALAN ARMANDO", "oficina": "Delicias", "puesto": "Operador Local ML"}, {"numNomina": 2668, "nombre": "BUSTAMANTE RAMOS JORGE", "oficina": "Monclova", "puesto": "Operador Local"}, {"numNomina": 2672, "nombre": "SANCHEZ MURILLO ALAN", "oficina": "Parral", "puesto": "Operador Local ML"}, {"numNomina": 2673, "nombre": "AVILA MERAZ CARLOS ALONSO", "oficina": "Delicias", "puesto": "Auxiliar de Operaciones"}, {"numNomina": 2678, "nombre": "ELIZONDO GONZALEZ SAMUEL SERGIO", "oficina": "Nuevo Laredo", "puesto": "Operador Local"}, {"numNomina": 2683, "nombre": "BAZALDUA MALDONADO CARLOS", "oficina": "CEDIS", "puesto": "Auxiliar de Operaciones"}, {"numNomina": 2684, "nombre": "TEJADA CARREON JAIME SAUL", "oficina": "CD Victoria", "puesto": "Operador Local"}, {"numNomina": 2687, "nombre": "AMARO PUGA MIGUEL ANGEL", "oficina": "Reynosa", "puesto": "Vendedor Mostrador"}, {"numNomina": 2688, "nombre": "LOPEZ DE ANDA EDGAR ADALBERTO", "oficina": "Ventas", "puesto": "Coordinador De Puntos De Venta"}, {"numNomina": 2694, "nombre": "PAREDES ARIAS ELIZABETH", "oficina": "Chihuahua", "puesto": "Auxiliar de Operaciones"}, {"numNomina": 2700, "nombre": "VELAZQUEZ INGUANZO CECILIA GUADALUPE", "oficina": "Recursos Humanos", "puesto": "Generalista RH"}, {"numNomina": 2709, "nombre": "COVARRUBIAS SALDAÑA RONALDO DE JESUS", "oficina": "Combustibles", "puesto": "Auxiliar De Combustible"}, {"numNomina": 2710, "nombre": "RODRIGUEZ GONGORA RAUL", "oficina": "Porteo", "puesto": "Auxiliar de Operaciones"}, {"numNomina": 2717, "nombre": "SILVA NEGRETE VICTOR HUGO", "oficina": "Reynosa", "puesto": "Operador Local"}, {"numNomina": 2724, "nombre": "VILLARREAL LOPEZ MARCIA CONSUELO", "oficina": "Reynosa", "puesto": "Supervisor De Operaciones"}, {"numNomina": 2725, "nombre": "SEGOVIA LOPEZ JOSE DE JESUS", "oficina": "Nuevo Laredo", "puesto": "Operador Local"}, {"numNomina": 2727, "nombre": "SAENZ RODRIGUEZ JORGE ALAN", "oficina": "Torreón", "puesto": "Auxiliar de Operaciones"}, {"numNomina": 2732, "nombre": "PALAFOX ACUA JOCELYNE", "oficina": "Administración", "puesto": "Analista COD"}, {"numNomina": 2733, "nombre": "SOTO MARTINEZ LUIS ANTONIO", "oficina": "CEDIS", "puesto": "Auxiliar de Plataforma"}, {"numNomina": 2740, "nombre": "SALAZAR SANCHEZ EDSON", "oficina": "Ventas", "puesto": "Documentador"}, {"numNomina": 2741, "nombre": "TIJERINA ARECHIGA OLIVERIO", "oficina": "Dirección", "puesto": "Analista De Informacion Y Okr"}, {"numNomina": 2742, "nombre": "DELGADO ISAIS JUAN ANTONIO", "oficina": "Saltillo", "puesto": "Jefe De Oficina"}, {"numNomina": 2744, "nombre": "OVALLE SEPULVEDA ERNESTO ALONSO", "oficina": "Mantenimiento", "puesto": "Gerente De Taller Automotriz"}, {"numNomina": 2746, "nombre": "ORNELAS CASTAÑON ENRIQUE", "oficina": "CD Victoria", "puesto": "Auxiliar de Operaciones"}, {"numNomina": 2747, "nombre": "ORTIZ LUNA JOSE GERARDO", "oficina": "CD Juárez", "puesto": "Operador Local"}, {"numNomina": 2748, "nombre": "PEREZ ACOSTA GUILLERMO DANIEL", "oficina": "Seguridad Vial", "puesto": "Monitorista"}, {"numNomina": 2751, "nombre": "VELAZCO CRUZ MICHAEL", "oficina": "Monterrey", "puesto": "Operador Local"}, {"numNomina": 2753, "nombre": "HERRERA LANDA MIGUEL ANGEL", "oficina": "San Luis Potosí", "puesto": "Vendedor Mostrador"}, {"numNomina": 2757, "nombre": "OLIVARES MARIN SERGIO ALFREDO", "oficina": "Monterrey", "puesto": "Operador Local"}, {"numNomina": 2758, "nombre": "SILOS VEGA OBED", "oficina": "Torreón", "puesto": "Auxiliar de Operaciones"}, {"numNomina": 2760, "nombre": "AVILA DE LA PARRA GUILLERMO", "oficina": "CD Valles", "puesto": "Jefe De Oficina"}, {"numNomina": 2768, "nombre": "SAUCEDA GARZA ADRIAN EDUARDO", "oficina": "Mantenimiento", "puesto": "Mecanico B"}, {"numNomina": 2769, "nombre": "RONCO PEREZ DAVID OLDSTAN", "oficina": "Mantenimiento", "puesto": "Mecanico A"}, {"numNomina": 2771, "nombre": "BARCENAS RAMIREZ CARLOS DAVID", "oficina": "Piedras Negras", "puesto": "Supervisor De Operaciones"}, {"numNomina": 2774, "nombre": "CASTRO JIMENEZ JESUS ARNOLDO", "oficina": "Chihuahua", "puesto": "Supervisor De Operaciones"}, {"numNomina": 2777, "nombre": "BRAVO CERVANTES LUIS ENRIQUE", "oficina": "Reynosa", "puesto": "Auxiliar de Operaciones"}, {"numNomina": 2779, "nombre": "CAPORAL RODRIGUEZ JOSE ANGEL", "oficina": "CEDIS", "puesto": "Auxiliar de Plataforma"}, {"numNomina": 2781, "nombre": "ESQUIVEL MARTINEZ RICARDO", "oficina": "Administración", "puesto": "Compras"}, {"numNomina": 2782, "nombre": "VARGAS DE LEON JONATHAN JESUS", "oficina": "Monterrey", "puesto": "Auxiliar de Operaciones"}, {"numNomina": 2785, "nombre": "ZAVALA ROBLES EDER NATALIO", "oficina": "Chihuahua", "puesto": "Operador Local"}, {"numNomina": 2787, "nombre": "PAZ PACHICANO PABLO CESAR", "oficina": "Monterrey", "puesto": "Operador Local Recolecciones"}, {"numNomina": 2789, "nombre": "TOVAR LOPEZ JOHANN ALFREDO", "oficina": "CD Victoria", "puesto": "Operador Local ML"}, {"numNomina": 2790, "nombre": "AGUILERA CASTILLO MAURICIO JAVIER", "oficina": "CD Victoria", "puesto": "Operador Local ML"}, {"numNomina": 2794, "nombre": "OLIVAS ORTIZ CESAR ANTONIO", "oficina": "Tampico", "puesto": "Operador Local Recolecciones"}, {"numNomina": 2798, "nombre": "RIVERA MARES MIGUEL EDUARDO", "oficina": "Porteo", "puesto": "Operador Local"}, {"numNomina": 2799, "nombre": "BENAVIDES ARREOLA EDGAR JAIR", "oficina": "Matamoros", "puesto": "Operador Local"}, {"numNomina": 2803, "nombre": "RODRIGUEZ BALDERAS GABRIEL GUADALUPE", "oficina": "CD Victoria", "puesto": "Operador Local ML"}, {"numNomina": 2805, "nombre": "CONTRERAS CORTEZ NABOR", "oficina": "Monterrey", "puesto": "Operador Local Recolecciones"}, {"numNomina": 2807, "nombre": "HERNANDEZ ARANDA GAMALIEL", "oficina": "Matamoros", "puesto": "Operador Local"}, {"numNomina": 2808, "nombre": "SALDAÑA AZUA JOAQUIN", "oficina": "Tampico", "puesto": "Operador Local"}, {"numNomina": 2811, "nombre": "CORRAL SANCHEZ IRAD AZAEL", "oficina": "Saltillo", "puesto": "Operador Local"}, {"numNomina": 2813, "nombre": "ALVAREZ SUSTAITA CARLOS IVAN", "oficina": "Monterrey", "puesto": "Operador Local"}, {"numNomina": 2819, "nombre": "VIESCA VAZQUEZ OSVALDO", "oficina": "Torreón", "puesto": "Auxiliar de Operaciones"}, {"numNomina": 2821, "nombre": "RAMIREZ GUZMAN YADIRA", "oficina": "Recursos Humanos", "puesto": "Gerente De Recursos Humanos"}, {"numNomina": 2822, "nombre": "PEREZ BOCANEGRA JUAN ANTONIO", "oficina": "Mantenimiento", "puesto": "Mecanico A"}, {"numNomina": 2823, "nombre": "RAMIREZ ALONSO ESMERALDA", "oficina": "Mantenimiento", "puesto": "Almacenista de refacciones"}, {"numNomina": 2824, "nombre": "ESPAÑA FLORES EDGAR OSVALDO", "oficina": "Monterrey", "puesto": "Operador Local"}, {"numNomina": 2826, "nombre": "LAZCANO TARIN IVAN ALBERTO", "oficina": "Parral", "puesto": "Operador Local Peak Season"}, {"numNomina": 2828, "nombre": "ABREGO CARRIZALES GABRIELA VICTORIA", "oficina": "Recursos Humanos", "puesto": "Coordinador De Capacitación"}, {"numNomina": 2829, "nombre": "ROBLEDO GARCIA KARLA ZOE", "oficina": "Ventas", "puesto": "Creador De Contenido"}, {"numNomina": 2831, "nombre": "BELTRAN QUINTANA FRANCISCO", "oficina": "Ventas", "puesto": "Ejecutivo De Ventas"}, {"numNomina": 2832, "nombre": "MARQUEZ GONZALEZ JOSE ALFONSO", "oficina": "CD Juárez", "puesto": "Operador Local"}, {"numNomina": 2835, "nombre": "LEOS SIGALA LAZARO LEOBARDO", "oficina": "Chihuahua", "puesto": "Operador Local"}, {"numNomina": 2836, "nombre": "LUPIO SINALOA JOSE FERNANDO", "oficina": "Cuauhtémoc", "puesto": "Operador Local ML"}, {"numNomina": 2838, "nombre": "CORONA CHIU FRANCISCO JAVIER", "oficina": "Operaciones", "puesto": "Performance Y Eficiencia Operativa"}, {"numNomina": 2841, "nombre": "ANGELES SOBERANES JULIO CESAR", "oficina": "Tampico", "puesto": "Auxiliar de Operaciones"}, {"numNomina": 2845, "nombre": "FRAGOSO GONZALEZ HECTOR HUGO", "oficina": "Porteo", "puesto": "Operador Local"}, {"numNomina": 2850, "nombre": "GARCIA DE LA CERDA HECTOR ALAN", "oficina": "Monterrey", "puesto": "Operador Local Entregas"}, {"numNomina": 2852, "nombre": "ZUÑIGA AVILA LUIS MANUEL ALEJANDRO", "oficina": "CEDIS", "puesto": "Auxiliar de Plataforma"}, {"numNomina": 2856, "nombre": "MARQUEZ MARTINEZ ENEDINA", "oficina": "Recursos Humanos", "puesto": "Ayudante de Cocina"}, {"numNomina": 2860, "nombre": "LOPEZ TORRES ISRAEL", "oficina": "Monterrey", "puesto": "Operador Local"}, {"numNomina": 2861, "nombre": "MATA RODRIGUEZ JOSE GUADALUPE", "oficina": "Saltillo", "puesto": "Operador Local"}, {"numNomina": 2865, "nombre": "REYNA PALOMO ROBERTO DANIEL", "oficina": "San Luis Potosí", "puesto": "Auxiliar de Operaciones"}, {"numNomina": 2871, "nombre": "URBINA MARTINEZ ARAM YAIR", "oficina": "Nuevo Laredo", "puesto": "Vendedor Mostrador"}, {"numNomina": 2873, "nombre": "CRUZ GONZALEZ AARON", "oficina": "San Luis Potosí", "puesto": "Operador Local"}, {"numNomina": 2877, "nombre": "RUIZ DIAZ LUIS DAVID", "oficina": "Recursos Humanos", "puesto": "Reclutador"}, {"numNomina": 2879, "nombre": "ROJAS RIOS VICTOR EDUARDO", "oficina": "San Luis Potosí", "puesto": "Auxiliar de Operaciones"}, {"numNomina": 2880, "nombre": "ZUÑIGA BANDA LUIS OMAR", "oficina": "Porteo", "puesto": "Auxiliar de Operaciones"}, {"numNomina": 2881, "nombre": "GUERRERO SALAZAR JESUS URIEL", "oficina": "Matamoros", "puesto": "Auxiliar de Operaciones"}, {"numNomina": 2885, "nombre": "FLORES ANDRES RENE", "oficina": "Monterrey", "puesto": "Auxiliar de Operaciones"}, {"numNomina": 2890, "nombre": "SANDOVAL DELGADO HECTOR EDUARDO", "oficina": "Seguridad Vial", "puesto": "Monitorista"}, {"numNomina": 2891, "nombre": "GARAY RAMOS EDWIN OMAR", "oficina": "Monterrey", "puesto": "Auxiliar de Operaciones"}, {"numNomina": 2893, "nombre": "MUÑOZ SANDOVAL JOSE GERARDO", "oficina": "San Luis Potosí", "puesto": "Supervisor De Operaciones"}, {"numNomina": 2896, "nombre": "MORTERA MARQUEZ EBER", "oficina": "Reynosa", "puesto": "Operador Local"}, {"numNomina": 2901, "nombre": "MORENO SANCHEZ JOSUE ISRAEL", "oficina": "San Luis Potosí", "puesto": "Jefe De Oficina"}, {"numNomina": 2902, "nombre": "BAUTISTA ENRIQUEZ JOSE RAMON", "oficina": "Tampico", "puesto": "Auxiliar de Operaciones"}, {"numNomina": 2903, "nombre": "LUNA IBARRA JUAN ANGEL", "oficina": "Monterrey", "puesto": "Auxiliar de Operaciones"}, {"numNomina": 2907, "nombre": "NUÑEZ LOPEZ JOSE DE JESUS", "oficina": "Recursos Humanos", "puesto": "Reclutador"}, {"numNomina": 2908, "nombre": "MUÑIZ MORENO ISAI JACOB", "oficina": "Monterrey", "puesto": "Auxiliar de Operaciones"}, {"numNomina": 2910, "nombre": "LOPEZ CALIXTO ILSE MARISOL", "oficina": "San Luis Potosí", "puesto": "Supervisor De Operaciones"}, {"numNomina": 2912, "nombre": "GASCA ESCUDERO ADRIAN", "oficina": "Recursos Humanos", "puesto": "Reclutador"}, {"numNomina": 2913, "nombre": "RAMIREZ APARICIO ERIK BERTO", "oficina": "Nuevo Laredo", "puesto": "Auxiliar de Operaciones"}, {"numNomina": 2915, "nombre": "BRIONES CARRANCO SERGIO ANTONIO", "oficina": "Delicias", "puesto": "Operador Local ML"}, {"numNomina": 2916, "nombre": "DE LA ROSA FLORES CARLOS ALBERTO", "oficina": "Torreón", "puesto": "Auxiliar de Operaciones"}, {"numNomina": 2919, "nombre": "MIRANDA CARMONA HUGO OMAR", "oficina": "Chihuahua", "puesto": "Operador Local"}, {"numNomina": 2921, "nombre": "SOTO AYALA EDWIN ALONSO", "oficina": "CD Juárez", "puesto": "Auxiliar de Operaciones"}, {"numNomina": 2923, "nombre": "MONCADA NAVARRO ADOLFO EDIVALDO", "oficina": "Mantenimiento", "puesto": "Coordinador De Mantenimiento E Infraestructura"}, {"numNomina": 2925, "nombre": "JERONIMO BADILLO JOSE ALBERTO", "oficina": "Tampico", "puesto": "Vendedor Mostrador"}, {"numNomina": 2926, "nombre": "DIAZ REYES HANNIA EDITH", "oficina": "Tampico", "puesto": "Vendedor Mostrador"}, {"numNomina": 2929, "nombre": "NUÑEZ RIVERA JESUS RAMIRO", "oficina": "Chihuahua", "puesto": "Operador Local"}, {"numNomina": 2930, "nombre": "AVILA MEDRANO NELSON DE JESUS", "oficina": "CEDIS", "puesto": "Auxiliar de Plataforma"}, {"numNomina": 2934, "nombre": "QUINTERO TORRES JORGE HUMBERTO", "oficina": "San Luis Potosí", "puesto": "Auxiliar de Operaciones"}, {"numNomina": 2936, "nombre": "GABRIEL AGUILAR JOSE EMMANUEL", "oficina": "Monterrey", "puesto": "Operador Local Recolecciones"}, {"numNomina": 2937, "nombre": "SALDAÑA PARDO MARIO GUILLERMO", "oficina": "Monterrey", "puesto": "Operador Local"}, {"numNomina": 2939, "nombre": "ALANIS GARCIA RUBEN", "oficina": "Ventas", "puesto": "Ejecutivo cuenta clave"}, {"numNomina": 2940, "nombre": "VALDEZ ALVAREZ LEONARDO DANIEL", "oficina": "Monterrey", "puesto": "Operador Local Entregas"}, {"numNomina": 2942, "nombre": "SAUCEDO AGUILAR ZAIRA MARIELA", "oficina": "Tampico", "puesto": "Dispatcher"}, {"numNomina": 2945, "nombre": "VILLARREAL HORTA EDGAR YONATAN", "oficina": "Operaciones", "puesto": "Gerente De Operaciones"}, {"numNomina": 2946, "nombre": "ESPINOZA GARCIA SHERLYN JAHAYRA", "oficina": "San Luis Potosí", "puesto": "Vendedor Mostrador"}, {"numNomina": 2947, "nombre": "VILLARREAL CRUZ ANA PAOLA", "oficina": "Recursos Humanos", "puesto": "Auxiliar de Capacitación"}, {"numNomina": 2948, "nombre": "DIAZ HUERTA KARLA BERENICE", "oficina": "Saltillo", "puesto": "Vendedor Mostrador"}, {"numNomina": 2952, "nombre": "SANTIAGO CONTRERAS ALEJANDRA ELIZABETH", "oficina": "Tampico", "puesto": "Dispatcher"}, {"numNomina": 2954, "nombre": "OSORIO HERNANDEZ GABRIEL", "oficina": "Nuevo Laredo", "puesto": "Operador Local"}, {"numNomina": 2955, "nombre": "MORATO AVILES MARIO ALEJANDRO", "oficina": "Tampico", "puesto": "Operador Local ML"}, {"numNomina": 2956, "nombre": "CASTILLO GARCIA JESUS MANUEL", "oficina": "Torreón", "puesto": "Operador Local ML"}, {"numNomina": 2958, "nombre": "PRADO REYES CRISTIAN YAIR", "oficina": "Monterrey", "puesto": "Documentador"}, {"numNomina": 2961, "nombre": "CORDOVA MIGUEL ANDRES MANUEL AMADO", "oficina": "Operaciones", "puesto": "Jefe De Embarques"}, {"numNomina": 2962, "nombre": "LOREDO GASPAR KEVIN ALDAIR", "oficina": "San Luis Potosí", "puesto": "Operador Local"}, {"numNomina": 2963, "nombre": "CARREON DIAZ JESUS ALBERTO", "oficina": "Torreón", "puesto": "Operador Local ML"}, {"numNomina": 2964, "nombre": "PINEDA PEREZ JOHAN AOLANI", "oficina": "Monterrey", "puesto": "Operador Local Entregas"}, {"numNomina": 2965, "nombre": "GARCIA AVILA DANIEL", "oficina": "Torreón", "puesto": "Operador Local ML"}, {"numNomina": 2966, "nombre": "LEDEZMA MORENO XIMENA SAHARAI", "oficina": "Monterrey", "puesto": "Vendedor Mostrador"}, {"numNomina": 2967, "nombre": "LEDEZMA IBARRA RAYMUNDO MOISES", "oficina": "Monclova", "puesto": "Auxiliar de Operaciones"}, {"numNomina": 2968, "nombre": "MARTINEZ ALONSO ELIAS ALEJANDRO", "oficina": "Tampico", "puesto": "Operador Local"}, {"numNomina": 2969, "nombre": "LOPEZ CARREON JASON OSWALDO", "oficina": "San Luis Potosí", "puesto": "Operador Local"}, {"numNomina": 2970, "nombre": "DELGADO SUSTAYTA JULIO CESAR", "oficina": "CD Juárez", "puesto": "Operador Local"}, {"numNomina": 2971, "nombre": "MARTINEZ FABIAN RAYMUNDO", "oficina": "Tampico", "puesto": "Operador Local ML"}, {"numNomina": 2972, "nombre": "BENCOMO LOPEZ DAGOBERTO", "oficina": "Cuauhtémoc", "puesto": "Operador Local ML"}, {"numNomina": 2973, "nombre": "ESPINOZA CARDENAS LUIS ALEJANDRO", "oficina": "Chihuahua", "puesto": "Operador Local"}, {"numNomina": 2974, "nombre": "PALACIOS ZUÑIGA JUAN ABEL", "oficina": "Torreón", "puesto": "Operador Local ML"}, {"numNomina": 2976, "nombre": "PONCE GOMEZ JOSE ALFREDO", "oficina": "Tampico", "puesto": "Operador Local"}, {"numNomina": 2977, "nombre": "DE LOS SANTOS GONZALEZ ALEJANDRO ENRIQUE", "oficina": "Saltillo", "puesto": "Operador Local"}, {"numNomina": 2979, "nombre": "VAZQUEZ GOMEZ JORGE LUIS", "oficina": "Torreón", "puesto": "Operador Local ML"}, {"numNomina": 2980, "nombre": "GONZALEZ RAMIREZ LUIS ENRIQUE", "oficina": "Monterrey", "puesto": "Auxiliar de Operaciones"}, {"numNomina": 2981, "nombre": "CARRIZALES SILVA CHRISTIAN JONATHAN", "oficina": "San Luis Potosí", "puesto": "Auxiliar de Operaciones"}];
+
+// ── HTML principal ──────────────────────────────────────────────────────────
+function plantillaHTML(){
+  const ofSel = window._plantillaOficina || '';
+  const totalOfs = Object.keys(plantillaDB).length;
+
+  // Vista de lista de oficinas
+  if(!ofSel){
+    const stats = OFICINAS.map(of=>{
+      const puestos = plantillaDB[of]||{};
+      const totalCupos = Object.values(puestos).reduce((s,p)=>s+(p.cupo||0),0);
+      const totalOcup  = Object.values(puestos).reduce((s,p)=>s+plantillaOcupados(of,Object.keys(puestos).find(k=>puestos[k]===p)||''),0);
+      const nPuestos = Object.keys(puestos).length;
+      return {of, totalCupos, nPuestos};
+    }).filter(x=>x.nPuestos>0||plantillaDB[x.of]);
+
+    // Cards resumen global
+    const totalCuposGlobal = Object.values(plantillaDB).reduce((s,of)=>s+Object.values(of).reduce((ss,p)=>ss+(p.cupo||0),0),0);
+    const totalOcupGlobal  = db.filter(r=>r.estatus!=='baja').length;
+
+    return `
+<div class="stats-row">
+  <div class="stat-card"><div class="stat-label">Oficinas con plantilla</div><div class="stat-value">${totalOfs}</div></div>
+  <div class="stat-card"><div class="stat-label">Cupos totales</div><div class="stat-value">${totalCuposGlobal}</div></div>
+  <div class="stat-card"><div class="stat-label">Empleados activos</div><div class="stat-value" style="color:#16a34a">${totalOcupGlobal}</div></div>
+  <div class="stat-card"><div class="stat-label">Disponibles</div><div class="stat-value" style="color:var(--afimex-blue)">${Math.max(0,totalCuposGlobal-totalOcupGlobal)}</div></div>
+</div>
+<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:10px">
+  <div style="font-size:14px;font-weight:600;color:var(--text)">Plantilla por Oficina</div>
+  <button class="btn btn-primary btn-sm" onclick="plantillaAbrirNuevaOficina()">+ Agregar oficina</button>
+</div>
+${OFICINAS.length===0?'<div class="empty-state">No hay oficinas configuradas</div>':
+  `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px">
+  ${OFICINAS.map(of=>{
+    const puestos = plantillaDB[of]||{};
+    const nPuestos = Object.keys(puestos).length;
+    const cuposOf = Object.values(puestos).reduce((s,p)=>s+(p.cupo||0),0);
+    const ocupOf  = Object.keys(puestos).reduce((s,pu)=>s+plantillaOcupados(of,pu),0);
+    const dispOf  = Math.max(0,cuposOf-ocupOf);
+    const pct     = cuposOf>0?Math.round(ocupOf/cuposOf*100):0;
+    const color   = pct>=100?'#dc2626':pct>=80?'#f59e0b':'#16a34a';
+    const tieneConf = nPuestos>0;
+    return `<div style="background:white;border:1px solid var(--border);border-radius:var(--radius);padding:14px;cursor:${tieneConf?'pointer':'default'};transition:box-shadow .15s"
+      ${tieneConf?`onclick="window._plantillaOficina='${of.replace(/'/g,"\\'")}';render()"`:''}
+      onmouseover="if(${tieneConf})this.style.boxShadow='0 2px 12px rgba(0,0,0,.1)'"
+      onmouseout="this.style.boxShadow=''">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+        <div style="font-size:13px;font-weight:700;color:var(--afimex-blue)">${of}</div>
+        ${tieneConf
+          ? `<span style="font-size:11px;padding:2px 8px;border-radius:99px;background:${color}20;color:${color};font-weight:600">${pct}%</span>`
+          : `<button class="btn btn-sm" style="font-size:11px;padding:2px 8px;background:var(--afimex-orange-light);color:var(--afimex-orange);border:1px solid var(--afimex-orange)" onclick="event.stopPropagation();plantillaAbrirConfigOficina('${of.replace(/'/g,"\\'")}')">Configurar</button>`
+        }
+      </div>
+      ${tieneConf?`
+      <div style="background:var(--bg2);border-radius:4px;height:6px;margin-bottom:8px;overflow:hidden">
+        <div style="width:${Math.min(100,pct)}%;height:100%;background:${color};border-radius:4px;transition:width .3s"></div>
+      </div>
+      <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--text2)">
+        <span>${nPuestos} puesto${nPuestos!==1?'s':''}</span>
+        <span style="color:${color};font-weight:600">${ocupOf}/${cuposOf} — ${dispOf} libre${dispOf!==1?'s':''}</span>
+      </div>
+      <div style="margin-top:8px;display:flex;gap:6px">
+        <button class="btn btn-sm" style="font-size:11px;flex:1;background:var(--afimex-blue-light);color:var(--afimex-blue);border:1px solid #bfdbfe" onclick="event.stopPropagation();plantillaAbrirConfigOficina('${of.replace(/'/g,"\\'")}')">⚙ Cupos</button>
+        <button class="btn btn-sm" style="font-size:11px;flex:1;background:#f0fdf4;color:#16a34a;border:1px solid #bbf7d0" onclick="event.stopPropagation();window._plantillaOficina='${of.replace(/'/g,"\\'")}';render()">👥 Asignados</button>
+      </div>`:`<div style="font-size:11px;color:var(--text2)">Sin cupos configurados</div>`}
+    </div>`;
+  }).join('')}
+  </div>`}`;
+  }
+
+  // Vista detalle de oficina
+  const of = ofSel;
+  const puestos = plantillaDB[of]||{};
+  const empleadosOf = db.filter(r=>r.oficina===of&&r.estatus!=='baja');
+
+  return `
+<div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;flex-wrap:wrap">
+  <button class="btn btn-secondary btn-sm" onclick="window._plantillaOficina='';render()">← Regresar</button>
+  <div style="font-size:16px;font-weight:700;color:var(--afimex-blue)">${of}</div>
+  <div style="margin-left:auto;display:flex;gap:8px">
+    <button class="btn btn-sm" style="background:var(--afimex-blue-light);color:var(--afimex-blue);border:1px solid #bfdbfe" onclick="plantillaAbrirConfigOficina('${of.replace(/'/g,"\\'")}')">⚙ Editar cupos</button>
+    <button class="btn btn-primary btn-sm" onclick="plantillaGuardarAsignados('${of.replace(/'/g,"\\'")}')">💾 Guardar asignados</button>
+  </div>
+</div>
+
+${Object.keys(puestos).length===0
+  ? `<div class="empty-state">Esta oficina no tiene cupos configurados. <button class="btn btn-primary btn-sm" style="margin-top:10px" onclick="plantillaAbrirConfigOficina('${of.replace(/'/g,"\\'")}')">Configurar ahora</button></div>`
+  : `<div id="plantilla-asignados-${of.replace(/\s/g,'_')}">
+  ${Object.entries(puestos).map(([pu,cfg])=>{
+    const cupo = cfg.cupo||0;
+    const asignados = (cfg.asignados||[]).filter(a=>a&&a.numNomina);
+    const ocupados = asignados.length;
+    const libres = Math.max(0,cupo-ocupados);
+    const pct = cupo>0?Math.round(ocupados/cupo*100):0;
+    const color = pct>=100?'#dc2626':pct>=80?'#f59e0b':'#16a34a';
+
+    // Filas de asignados actuales
+    const filasAsig = asignados.map((a,i)=>`
+      <div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--border)">
+        <div style="width:24px;height:24px;border-radius:50%;background:var(--afimex-blue-light);color:var(--afimex-blue);display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;flex-shrink:0">${i+1}</div>
+        <select data-of="${of}" data-pu="${pu}" data-idx="${i}" style="flex:1;border:1px solid var(--border2);border-radius:var(--radius-sm);padding:5px 8px;font-size:12px">
+          <option value="">— Sin asignar —</option>
+          ${empleadosOf.map(e=>`<option value="${e.numNomina}" ${e.numNomina===a.numNomina?'selected':''}>${e.nombre} #${e.numNomina}</option>`).join('')}
+        </select>
+        <button onclick="plantillaQuitarAsignado('${of.replace(/'/g,"\\'")}','${pu.replace(/'/g,"\\'")}',${i})" style="background:#fff1f2;border:1px solid #fecdd3;color:#e11d48;border-radius:4px;padding:3px 8px;font-size:11px;cursor:pointer">✕</button>
+      </div>`).join('');
+
+    // Filas vacías hasta completar el cupo
+    const filasVacias = Array.from({length:libres},(_, i)=>`
+      <div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--border)">
+        <div style="width:24px;height:24px;border-radius:50%;background:#f1f5f9;color:#94a3b8;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;flex-shrink:0">${ocupados+i+1}</div>
+        <select data-of="${of}" data-pu="${pu}" data-idx="${ocupados+i}" style="flex:1;border:1px solid var(--border2);border-radius:var(--radius-sm);padding:5px 8px;font-size:12px;background:#fafafa">
+          <option value="">— Lugar disponible —</option>
+          ${empleadosOf.map(e=>`<option value="${e.numNomina}">${e.nombre} #${e.numNomina}</option>`).join('')}
+        </select>
+      </div>`).join('');
+
+    return `
+    <div style="background:white;border:1px solid var(--border);border-radius:var(--radius);margin-bottom:12px;overflow:hidden">
+      <div style="background:var(--afimex-blue);padding:10px 16px;display:flex;align-items:center;justify-content:space-between">
+        <div style="font-size:12px;font-weight:700;color:white;text-transform:uppercase;letter-spacing:.5px">${pu}</div>
+        <div style="display:flex;align-items:center;gap:10px">
+          <span style="font-size:11px;padding:2px 10px;border-radius:99px;background:${color};color:white;font-weight:600">${ocupados}/${cupo}</span>
+          <span style="font-size:11px;color:rgba(255,255,255,.7)">${libres} libre${libres!==1?'s':''}</span>
+        </div>
+      </div>
+      <div style="padding:0 16px 8px">
+        <div style="background:var(--bg2);border-radius:4px;height:4px;margin:10px 0 12px;overflow:hidden">
+          <div style="width:${Math.min(100,pct)}%;height:100%;background:${color};border-radius:4px"></div>
+        </div>
+        ${filasAsig}
+        ${filasVacias}
+        ${cupo===0?'<div style="font-size:11px;color:var(--text2);padding:8px 0">Sin cupo definido</div>':''}
+      </div>
+    </div>`;
+  }).join('')}
+  </div>`
+}`;
+}
+
+// ── Modal configurar cupos de una oficina ──────────────────────────────────
+function plantillaAbrirConfigOficina(of){
+  const puestos = plantillaDB[of]||{};
+  const todosLosPuestos = [...new Set([
+    ...(PUESTOS_POR_OFICINA[of]||[]),
+    ...Object.keys(puestos)
+  ])].sort();
+
+  const overlay = document.createElement('div');
+  overlay.id = 'plantilla-config-overlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:9000;display:flex;align-items:flex-start;justify-content:center;padding:20px;overflow-y:auto';
+
+  overlay.innerHTML = `
+  <div style="background:white;border-radius:12px;width:100%;max-width:620px;box-shadow:0 8px 40px rgba(0,0,0,.25);margin:auto">
+    <div style="background:var(--afimex-blue);border-radius:12px 12px 0 0;padding:16px 24px;display:flex;align-items:center;justify-content:space-between">
+      <div>
+        <div style="font-size:11px;color:rgba(255,255,255,.7);text-transform:uppercase;letter-spacing:.5px;margin-bottom:2px">Configurar cupos</div>
+        <div style="font-size:16px;font-weight:700;color:white">${of}</div>
+      </div>
+      <button onclick="document.getElementById('plantilla-config-overlay').remove()" style="background:rgba(255,255,255,.15);border:none;color:white;width:32px;height:32px;border-radius:50%;font-size:18px;cursor:pointer">×</button>
+    </div>
+    <div style="padding:20px 24px;max-height:65vh;overflow-y:auto">
+      <div style="font-size:12px;color:var(--text2);margin-bottom:14px">Define cuántos lugares hay para cada puesto en esta oficina. Pon 0 para no limitar.</div>
+      <div style="margin-bottom:12px">
+        <div style="display:flex;gap:8px;align-items:center">
+          <select id="plt-nuevo-puesto" style="flex:1;border:1px solid var(--border2);border-radius:var(--radius-sm);padding:7px 10px;font-size:13px">
+            <option value="">— Agregar puesto —</option>
+            ${PUESTOS.filter(p=>!todosLosPuestos.includes(p)).map(p=>`<option value="${p}">${p}</option>`).join('')}
+          </select>
+          <button class="btn btn-primary btn-sm" onclick="plantillaAgregarPuestoConfig('${of.replace(/'/g,"\\'")}')">+ Agregar</button>
+        </div>
+      </div>
+      <div id="plt-config-lista">
+        ${todosLosPuestos.map(pu=>{
+          const cupo = puestos[pu]?.cupo||0;
+          return `<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border)">
+            <div style="flex:1;font-size:13px;font-weight:500;color:var(--text)">${pu}</div>
+            <div style="display:flex;align-items:center;gap:6px">
+              <button onclick="this.nextElementSibling.value=Math.max(0,parseInt(this.nextElementSibling.value||0)-1)" style="width:24px;height:24px;border:1px solid var(--border2);border-radius:4px;background:white;font-size:14px;cursor:pointer;display:flex;align-items:center;justify-content:center">-</button>
+              <input type="number" data-puesto="${pu}" value="${cupo}" min="0" style="width:60px;border:1px solid var(--border2);border-radius:4px;padding:4px 8px;font-size:13px;text-align:center">
+              <button onclick="this.previousElementSibling.value=Math.max(0,parseInt(this.previousElementSibling.value||0)+1)" style="width:24px;height:24px;border:1px solid var(--border2);border-radius:4px;background:white;font-size:14px;cursor:pointer;display:flex;align-items:center;justify-content:center">+</button>
+            </div>
+            <button onclick="this.closest('div[style]').remove()" style="background:#fff1f2;border:1px solid #fecdd3;color:#e11d48;border-radius:4px;padding:3px 8px;font-size:11px;cursor:pointer">✕</button>
+          </div>`;
+        }).join('')}
+      </div>
+    </div>
+    <div style="padding:16px 24px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:10px;background:var(--bg2);border-radius:0 0 12px 12px">
+      <button onclick="document.getElementById('plantilla-config-overlay').remove()" style="padding:8px 20px;border:1px solid var(--border2);background:white;border-radius:var(--radius-sm);font-size:13px;cursor:pointer">Cancelar</button>
+      <button onclick="plantillaGuardarConfig('${of.replace(/'/g,"\\'")}');" style="padding:8px 24px;background:var(--afimex-blue);color:white;border:none;border-radius:var(--radius-sm);font-size:13px;font-weight:600;cursor:pointer">💾 Guardar cupos</button>
+    </div>
+  </div>`;
+
+  document.body.appendChild(overlay);
+  overlay.addEventListener('click', e=>{ if(e.target===overlay) overlay.remove(); });
+}
+
+function plantillaAgregarPuestoConfig(of){
+  const sel = document.getElementById('plt-nuevo-puesto');
+  const pu = sel?.value;
+  if(!pu) return;
+  const lista = document.getElementById('plt-config-lista');
+  if(!lista) return;
+  // Verificar que no esté ya
+  if(lista.querySelector(`input[data-puesto="${pu}"]`)) return;
+  const div = document.createElement('div');
+  div.style.cssText = 'display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border)';
+  div.innerHTML = `
+    <div style="flex:1;font-size:13px;font-weight:500;color:var(--text)">${pu}</div>
+    <div style="display:flex;align-items:center;gap:6px">
+      <button onclick="this.nextElementSibling.value=Math.max(0,parseInt(this.nextElementSibling.value||0)-1)" style="width:24px;height:24px;border:1px solid var(--border2);border-radius:4px;background:white;font-size:14px;cursor:pointer;display:flex;align-items:center;justify-content:center">-</button>
+      <input type="number" data-puesto="${pu}" value="0" min="0" style="width:60px;border:1px solid var(--border2);border-radius:4px;padding:4px 8px;font-size:13px;text-align:center">
+      <button onclick="this.previousElementSibling.value=Math.max(0,parseInt(this.previousElementSibling.value||0)+1)" style="width:24px;height:24px;border:1px solid var(--border2);border-radius:4px;background:white;font-size:14px;cursor:pointer;display:flex;align-items:center;justify-content:center">+</button>
+    </div>
+    <button onclick="this.closest('div').remove()" style="background:#fff1f2;border:1px solid #fecdd3;color:#e11d48;border-radius:4px;padding:3px 8px;font-size:11px;cursor:pointer">✕</button>`;
+  lista.appendChild(div);
+  sel.value='';
+}
+
+function plantillaAbrirNuevaOficina(){
+  const of = prompt('Nombre de la oficina a configurar:\n(debe coincidir exactamente con el nombre en el sistema)');
+  if(!of||!of.trim()) return;
+  if(!OFICINAS.includes(of.trim())){ showToast('Esa oficina no existe en el catálogo','#dc2626'); return; }
+  plantillaAbrirConfigOficina(of.trim());
+}
+
+async function plantillaGuardarConfig(of){
+  const inputs = document.querySelectorAll('#plt-config-lista input[data-puesto]');
+  if(!plantillaDB[of]) plantillaDB[of]={};
+  inputs.forEach(inp=>{
+    const pu = inp.dataset.puesto;
+    const cupo = Math.max(0,parseInt(inp.value)||0);
+    if(!plantillaDB[of][pu]) plantillaDB[of][pu]={cupo:0,asignados:[]};
+    plantillaDB[of][pu].cupo = cupo;
+  });
+  document.getElementById('plantilla-config-overlay')?.remove();
+  localStorage.setItem('afimex-plantilla',JSON.stringify(plantillaDB));
+  render();
+  showToast('✓ Cupos actualizados — '+of,'#16a34a');
+  try{ await syncPlantilla(); }catch(e){}
+}
+
+function plantillaQuitarAsignado(of, pu, idx){
+  if(!plantillaDB[of]||!plantillaDB[of][pu]) return;
+  const lista = plantillaDB[of][pu].asignados||[];
+  lista.splice(idx,1);
+  plantillaDB[of][pu].asignados = lista;
+  render();
+}
+
+async function plantillaGuardarAsignados(of){
+  const selects = document.querySelectorAll(`select[data-of="${of}"]`);
+  const grouped = {};
+  selects.forEach(s=>{
+    const pu = s.dataset.pu;
+    if(!grouped[pu]) grouped[pu]=[];
+    const val = s.value;
+    if(val){
+      const emp = db.find(r=>String(r.numNomina)===String(val));
+      if(emp) grouped[pu].push({numNomina:emp.numNomina,nombre:emp.nombre});
+    }
+  });
+  if(!plantillaDB[of]) plantillaDB[of]={};
+  Object.entries(grouped).forEach(([pu,lista])=>{
+    if(plantillaDB[of][pu]) plantillaDB[of][pu].asignados = lista;
+  });
+  localStorage.setItem('afimex-plantilla',JSON.stringify(plantillaDB));
+  const saving = document.createElement('div');
+  saving.style.cssText='position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#1A5FA8;color:white;padding:12px 24px;border-radius:99px;font-size:13px;font-weight:600;box-shadow:0 4px 20px rgba(0,0,0,.2);z-index:9999;display:flex;align-items:center;gap:10px';
+  saving.innerHTML='<span style="display:inline-block;width:16px;height:16px;border:2px solid rgba(255,255,255,.4);border-top-color:white;border-radius:50%;animation:spin .7s linear infinite"></span> Guardando plantilla...';
+  document.body.appendChild(saving);
+  try{
+    await syncPlantilla();
+    saving.style.background='#16a34a';
+    saving.innerHTML='✓ Plantilla guardada correctamente';
+  }catch(e){
+    saving.style.background='#f59e0b';
+    saving.innerHTML='⚠ Guardado local. Sin conexión a Drive';
+  }
+  setTimeout(()=>{saving.style.opacity='0';setTimeout(()=>saving.remove(),300);},2500);
+}
+
+// ── Importar empleados activos del xlsx a la plantilla (se llama desde UI) ─
+function plantillaImportarActivos(){
+  if(!confirm('¿Importar los 336 empleados activos a la plantilla? Esto asignará automáticamente a cada empleado a su puesto y oficina actual. Solo se asignará si el puesto ya tiene cupo configurado.')) return;
+  let asignados=0;
+  PLANTILLA_ACTIVOS_SEED.forEach(({numNomina,nombre,oficina,puesto})=>{
+    if(plantillaDB[oficina]&&plantillaDB[oficina][puesto]){
+      const lista = plantillaDB[oficina][puesto].asignados=plantillaDB[oficina][puesto].asignados||[];
+      if(!lista.find(a=>a.numNomina===numNomina)){
+        lista.push({numNomina,nombre});
+        asignados++;
+      }
+    }
+  });
+  localStorage.setItem('afimex-plantilla',JSON.stringify(plantillaDB));
+  syncPlantilla();
+  render();
+  showToast(`✓ ${asignados} empleados importados a la plantilla`,'#16a34a');
+}
 
 </script>
 </body>
