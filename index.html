@@ -166,7 +166,7 @@ input.field-ok { border-color: #16a34a; background: #f0fdf4; }
     <div style="display:flex;align-items:center;gap:12px">
       <div>
         <div class="topbar-title">AFIMEX PEOPLE</div>
-        <div class="topbar-sub">V 11.3.17 | Recursos Humanos</div>
+        <div class="topbar-sub">V 11.3.19 | Recursos Humanos</div>
       </div>
     </div>
     <div style="position:absolute;left:50%;transform:translateX(-50%)">
@@ -190,7 +190,7 @@ input.field-ok { border-color: #16a34a; background: #f0fdf4; }
 const ADMIN_PASS = '1006';
 const GENERALISTA_PASS = 'rh2024';
 const TABS_REC = ['altas','seguimiento','docs','pendientes']; // Pestañas reclutador
-const TABS_NOM = ['baja','finiquitos','incapacidades','pendientes']; // Pestañas nóminas
+const TABS_NOM = ['base','baja','finiquitos','incapacidades','pendientes']; // Pestañas nóminas
 const TABS_GER = ['altas','baja','seguimiento','base','docs','folios','incapacidades','plantilla','pendientes']; // Pestañas gerencia
 // ─── CATÁLOGO DE SALARIOS ────────────────────────────────────────────────────
 var DATA_SALARIOS = [
@@ -2725,12 +2725,16 @@ function baseHTML(){
              background:transparent;color:${active?'var(--afimex-blue)':'var(--text2)'};">${label}</button>`;
   };
 
-  const tabBar = `<div style="display:flex;gap:0;border-bottom:1px solid var(--border);margin-bottom:16px">
+  const esNominas = currentRole==='nominas';
+  // Nóminas solo ve Altas y fuerza esa subpestaña
+  if(esNominas && subTab !== 'altas') { window._baseTab='altas'; subTab='altas'; }
+
+  const tabBar = !esNominas ? `<div style="display:flex;gap:0;border-bottom:1px solid var(--border);margin-bottom:16px">
     ${stBtn('altas','&#x1F465; Altas')}
     ${stBtn('activos','&#x1F4CA; Activos')}
     ${stBtn('finiquitos','&#x1F4B0; Finiquitos')}
     ${stBtn('folios','&#x1F4CB; Folios de Salida')}
-  </div>`;
+  </div>` : '';
 
   // ══════════════════════════════════════════════════════════════
   // SUB-PESTAÑA: ALTAS
@@ -2778,7 +2782,7 @@ ${filtered.length===0?`<div class="empty-state">No se encontraron registros</div
   <th style="width:55px"># Nom.</th><th style="width:145px">Nombre</th><th style="width:80px">Tipo</th>
   <th style="width:100px">Oficina</th><th style="width:135px">Puesto</th><th style="width:85px">F. Ingreso</th>
   <th style="width:75px">Permanencia</th><th style="width:90px">NSS</th><th style="width:80px">Folio</th>
-  <th style="width:130px">Documentos</th><th style="width:160px">Acc.</th>
+  <th style="width:130px">Documentos</th>${!esNominas?'<th style="width:160px">Acc.</th>':''}
 </tr></thead>
 <tbody>${filtered.map(r=>`<tr>
   <td>${fmtNom(r.numNomina)||'&#x2014;'}</td><td title="${r.nombre}" style="font-weight:600">${r.nombre}</td>
@@ -2794,10 +2798,10 @@ ${filtered.length===0?`<div class="empty-state">No se encontraron registros</div
     `:`<button class="btn btn-secondary btn-sm" title="Contrato" onclick="printContratoSemanal(db[${db.indexOf(r)}])">CIT</button>`}
     <button class="btn btn-secondary btn-sm" title="Alta" onclick="printAlta(db[${db.indexOf(r)}])">Alta</button>
   </td>
-  <td style="white-space:nowrap">
+  ${!esNominas?`<td style="white-space:nowrap">
     <button class="btn btn-sm" style="background:#f5f3ff;border:1px solid #ddd6fe;color:#7c3aed;margin-right:3px" title="Editar expediente" onclick="abrirEditar(${db.indexOf(r)})">&#9998; Editar</button>
     <button class="btn btn-sm" style="background:#fff1f2;border:1px solid #fecdd3;color:#e11d48" title="Eliminar expediente" onclick="eliminar(${db.indexOf(r)})">&#128465; Eliminar</button>
-  </td>
+  </td>`:''}
 </tr>`).join('')}
 </tbody></table></div>`}`;
   }
@@ -5239,7 +5243,7 @@ function configHTML(){
     <!-- Sub-tabs -->
     <div style="display:flex;gap:4px;border-bottom:2px solid var(--border);margin-bottom:16px">
       ${tabs.map(t=>`
-      <button onclick="window._configTab=_configTab='${t.id}';if('${t.id}'!=='nominas')window._nomOficinaTab='';render()"
+      <button onclick="if(window._configTab==='posiciones'||window._configTab==='actividades'){localStorage.setItem('afimex-config-actividades',JSON.stringify(ACTIVIDADES));}window._configTab=_configTab='${t.id}';if('${t.id}'!=='nominas')window._nomOficinaTab='';render()"
         style="padding:8px 14px;border:none;background:${activeTab===t.id?'var(--afimex-blue)':'transparent'};
                color:${activeTab===t.id?'white':'var(--text2)'};border-radius:6px 6px 0 0;font-size:13px;font-weight:600;cursor:pointer">
         ${t.label}
@@ -5827,7 +5831,10 @@ function configPosicionesHTML(){
         + 'onchange="descActualizarTodas(' + "'" + safePuesto + "'" + ',this.value)" '
         + 'style="width:100%;padding:6px 8px;border:1px solid var(--border2);border-radius:4px;font-size:12px;font-family:inherit;resize:vertical;min-height:100px"'
         + '>' + safeActText + '</textarea>'
-        + '<div style="font-size:11px;color:var(--text2);margin-top:3px">&#128161; Una actividad por l&#237;nea</div>'
+        + '<div style="display:flex;align-items:center;justify-content:space-between;margin-top:4px">'
+        + '<span style="font-size:11px;color:var(--text2)">&#128161; Una actividad por l&#237;nea</span>'
+        + '<button onclick="configGuardar()" style="background:var(--afimex-blue);color:white;border:none;border-radius:4px;padding:3px 12px;font-size:11px;cursor:pointer;font-weight:600">&#128190; Guardar</button>'
+        + '</div>'
         + '</div>';
     } else {
       var cntTxt = acts.length > 0 ? acts.length+' actividad'+(acts.length>1?'es':'') : 'Sin descripción';
@@ -7641,11 +7648,14 @@ function posicionRenombrar(oldKey, oldPuesto, newPuesto){
 }
 function descActualizarTodas(puesto, valor){
   ACTIVIDADES[puesto] = valor.split('\n').map(function(l){return l.trim();}).filter(function(l){return l.length>0;});
+  // Guardar en localStorage inmediatamente (sin subir a Drive en cada keystroke)
+  localStorage.setItem('afimex-config-actividades', JSON.stringify(ACTIVIDADES));
 }
 function descAgregarActividad(puesto){
   if(!ACTIVIDADES[puesto]) ACTIVIDADES[puesto] = [];
   ACTIVIDADES[puesto].push('Nueva actividad');
   window._descPuestoSel = puesto;
+  localStorage.setItem('afimex-config-actividades', JSON.stringify(ACTIVIDADES));
   render();
 }
 
@@ -7653,6 +7663,7 @@ function descEliminarActividad(puesto, idx){
   if(!ACTIVIDADES[puesto]) return;
   ACTIVIDADES[puesto].splice(idx, 1);
   window._descPuestoSel = puesto;
+  localStorage.setItem('afimex-config-actividades', JSON.stringify(ACTIVIDADES));
   render();
 }
 
