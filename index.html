@@ -166,7 +166,7 @@ input.field-ok { border-color: #16a34a; background: #f0fdf4; }
     <div style="display:flex;align-items:center;gap:12px">
       <div>
         <div class="topbar-title">AFIMEX PEOPLE</div>
-        <div class="topbar-sub">V 11.3.19 | Recursos Humanos</div>
+        <div class="topbar-sub">V 11.3.21 | Recursos Humanos</div>
       </div>
     </div>
     <div style="position:absolute;left:50%;transform:translateX(-50%)">
@@ -993,7 +993,7 @@ async function folioAgregarManual(){
   render();
   showToast(`✓ Folio generado: ${folio}`);
 }
-function siguienteNomina(){const usados=new Set(db.map(r=>parseInt(r.numNomina)));let n=2958;while(usados.has(n))n++;return n;}
+function siguienteNomina(){const usados=new Set(db.map(r=>parseInt(r.numNomina)));let n=3000;while(usados.has(n))n++;return n;}
 function validarNomina(val){const n=parseInt(val);if(!val||isNaN(n))return{ok:false,msg:'Ingresa un número de nómina válido'};if(db.some(r=>parseInt(r.numNomina)===n))return{ok:false,msg:'# '+n+' ya está registrado'};return{ok:true,msg:'Disponible ✓'};}
 async function refreshNumNomina(){
   if(!tieneGSheets()||nomInput) return;
@@ -1534,7 +1534,7 @@ function printAlta(r){
     ${sec('IV','Designación de Beneficiario','#475569',
       row(`<div class="field w2"><div class="lbl">Nombre del beneficiario</div><div class="val">${r.benNombre||'—'}</div></div>`,
           field('Parentesco',r.benParentesco),
-          field('Fecha de nacimiento',fmtDate(r.benFechaNac)),
+          `<div class="field w2"><div class="lbl">Fecha de nacimiento</div><div class="val" style="white-space:normal">${fmtDate(r.benFechaNac)||'—'}</div></div>`,
           `<div class="field"><div class="lbl">Porcentaje</div><div class="val orange">${r.benPorcentaje||'100'}%</div></div>`) +
       row(`<div class="field w3"><div class="lbl">Domicilio del beneficiario</div><div class="val">${r.benDireccion||'—'}</div></div>`)
     )}
@@ -2176,7 +2176,7 @@ ${printBar}
   <div class="form-group"><label>Estado civil *</label><select name="estadoCivil"><option value="">— Seleccionar —</option><option>Casado</option><option>Soltero</option><option>Unión Libre</option><option>Divorciado</option><option>Otro</option></select></div>
   <div class="form-group full"><label>Domicilio *</label><input name="domicilio" placeholder="Calle, número, colonia"></div>
   <div class="form-group"><label>Estado *</label>${buildSelect('estado',ESTADOS,'Seleccionar estado')}</div>
-  <div class="form-group"><label>Municipio *</label><input name="municipio" placeholder="Municipio"></div>
+  <div class="form-group" style="flex:2"><label>Municipio *</label><input name="municipio" placeholder="Municipio"></div>
   <div class="form-group"><label>CP *</label><input name="cp" placeholder="00000" maxlength="5"></div>
   <div class="form-group"><label>CP Fiscal *</label><input name="cpFiscal" placeholder="00000" maxlength="5"></div>
   <div class="form-group"><label>Correo electrónico *</label><input name="correo" type="email" placeholder="correo@ejemplo.com"></div>
@@ -3490,6 +3490,7 @@ function abrirEditar(idx){
       <!-- DATOS PERSONALES -->
       <div style="font-size:11px;font-weight:700;color:var(--afimex-orange);text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px;padding-bottom:4px;border-bottom:2px solid var(--afimex-orange)">Datos Personales</div>
       <div class="form-grid" style="margin-bottom:14px">
+        <div class="form-group"><label># Nómina</label>${inp('numNomina',r.numNomina,'type="number" min="1"')}</div>
         <div class="form-group full"><label>Nombre completo</label>${inp('nombre',r.nombre)}</div>
         <div class="form-group"><label>Fecha de nacimiento</label>${inp('fechaNac',r.fechaNac,'type="date"')}</div>
         <div class="form-group"><label>Lugar de nacimiento</label>${inp('lugarNac',r.lugarNac)}</div>
@@ -3621,6 +3622,14 @@ async function guardarEditar(){
   if(isNaN(idx)||!db[idx]){ showToast('Error: registro no encontrado','#dc2626'); return; }
 
   const r = db[idx];
+
+  // Validar y actualizar número de nómina
+  const nuevoNom = parseInt(fd.get('numNomina'));
+  if(!isNaN(nuevoNom) && nuevoNom > 0){
+    const duplicado = db.find((x,i)=>i!==idx && parseInt(x.numNomina)===nuevoNom);
+    if(duplicado){ showToast('⛔ El # '+nuevoNom+' ya está registrado en otro expediente','#dc2626'); return; }
+    r.numNomina = nuevoNom;
+  }
 
   // Campos simples
   const campos = ['nombre','fechaNac','lugarNac','nacionalidad','genero','estadoCivil',
