@@ -166,7 +166,7 @@ input.field-ok { border-color: #16a34a; background: #f0fdf4; }
     <div style="display:flex;align-items:center;gap:12px">
       <div>
         <div class="topbar-title">AFIMEX PEOPLE</div>
-        <div class="topbar-sub">V 11.3.24 | Recursos Humanos</div>
+        <div class="topbar-sub">V 12.0.0 | Recursos Humanos</div>
       </div>
     </div>
     <div style="position:absolute;left:50%;transform:translateX(-50%)">
@@ -191,7 +191,7 @@ const ADMIN_PASS = '1006';
 const GENERALISTA_PASS = 'rh2024';
 const TABS_REC = ['altas','seguimiento','docs','pendientes']; // Pestañas reclutador
 const TABS_NOM = ['base','baja','finiquitos','incapacidades','pendientes']; // Pestañas nóminas
-const TABS_GER = ['altas','baja','seguimiento','base','docs','folios','incapacidades','plantilla','pendientes']; // Pestañas gerencia
+const TABS_GER = ['altas','baja','seguimiento','base','docs','folios','incapacidades','plantilla','indicadores','pendientes']; // Pestañas gerencia
 // ─── CATÁLOGO DE SALARIOS ────────────────────────────────────────────────────
 var DATA_SALARIOS = [
   { sd: 316,  sbc: 331.58, descripcion: "Salario Base Zona A" },
@@ -322,8 +322,8 @@ var OFICINAS_DIR = {
 };
 
 const TABS_GEN = ['altas','baja','seguimiento','docs','folios','pendientes'];
-const TABS_ADM = ['altas','baja','seguimiento','base','docs','finiquitos','incapacidades','usuarios','config','plantilla','pendientes'];
-const TAB_LABELS = {altas:'📋 Alta de Expediente',baja:'🚪 Solicitud de Baja',seguimiento:'📊 Seguimiento de Ingresos',folios:'📁 Folios de Salida',base:'🗄️ Base de Datos',docs:'🖨️ Impresión de Documentos',usuarios:'👥 Usuarios',config:'⚙️ Catálogo',finiquitos:'💰 Finiquitos',incapacidades:'🏥 Incapacidades',pendientes:'📌 Pendientes',plantilla:'🏢 Plantilla'};
+const TABS_ADM = ['altas','baja','seguimiento','base','docs','finiquitos','incapacidades','usuarios','config','plantilla','indicadores','pendientes'];
+const TAB_LABELS = {altas:'📋 Alta de Expediente',baja:'🚪 Solicitud de Baja',seguimiento:'📊 Seguimiento de Ingresos',folios:'📁 Folios de Salida',base:'🗄️ Base de Datos',docs:'🖨️ Impresión de Documentos',usuarios:'👥 Usuarios',config:'⚙️ Catálogo',finiquitos:'💰 Finiquitos',incapacidades:'🏥 Incapacidades',pendientes:'📌 Pendientes',plantilla:'🏢 Plantilla',indicadores:'📊 Indicadores'};
 function _penTabLabel(){
   const n=_penCountNuevos();
   return n>0
@@ -339,6 +339,7 @@ let db=[], seguimientos=[], foliosData={}, bajaColaborador=null, finiquitosDB=[]
 let plantillaDB={}; // { "Monterrey": { "Auxiliar de Operaciones": { cupo: 12, asignados: [{ numNomina, nombre }] } } }
 let activosDB=[]; // Lista mutable de empleados activos del xlsx (se inicializa desde PLANTILLA_ACTIVOS_SEED)
 let _activosQ='', _activosOf='', _activosPu='', _baseQ='';
+let indicadoresNominasDB = {}; // { "2026": { "ENE": { pa, pg, venta, pctNomina, salario, otrosBeneficios, ... } } }
 let _foliosOrden={col:'folio',dir:'desc'};
 let nomInput='', nssInput='';
 const today=new Date(); today.setHours(0,0,0,0);
@@ -531,6 +532,7 @@ async function loadData(){
   try{const v=localStorage.getItem('afimex-finiquitos');if(v)finiquitosDB=JSON.parse(v);}catch(e){finiquitosDB=[];}
   try{const v=localStorage.getItem('afimex-plantilla');if(v)plantillaDB=JSON.parse(v);}catch(e){plantillaDB={};}
   try{const v=localStorage.getItem('afimex-activos');if(v)activosDB=JSON.parse(v);}catch(e){activosDB=[];}
+  try{const v=localStorage.getItem('afimex-indicadores-nominas');if(v)indicadoresNominasDB=JSON.parse(v);}catch(e){indicadoresNominasDB={};}
 
   // ── Migración automática: buscar datos en TODAS las claves de localStorage ──
   // Útil cuando se abre el archivo desde una ruta diferente (nueva versión)
@@ -719,7 +721,11 @@ async function sincronizarDesdeGSheets(){
 
     // ── Aplicar catálogos ──
     const nom = resultados['Cat_Nominas'];
-    if(nom && Array.isArray(nom)){ DATA_NOMINAS.splice(0,DATA_NOMINAS.length,...nom); localStorage.setItem('afimex-config-nominas',JSON.stringify(DATA_NOMINAS)); }
+    if(nom && Array.isArray(nom) && nom.length>0){
+      // Reemplazar completamente — Drive es la fuente de verdad
+      DATA_NOMINAS.splice(0,DATA_NOMINAS.length,...nom);
+      localStorage.setItem('afimex-config-nominas',JSON.stringify(DATA_NOMINAS));
+    }
 
     const iata = resultados['Cat_IATA'];
     if(iata && typeof iata==='object'){ Object.keys(IATA_MAP).forEach(k=>delete IATA_MAP[k]); Object.assign(IATA_MAP,iata); localStorage.setItem('afimex-config-iata',JSON.stringify(IATA_MAP)); }
@@ -2986,7 +2992,7 @@ function render(){
     mostrarLoginInicial();
     return;
   }
-  const map={altas:altasHTML,baja:bajaHTML,seguimiento:seguimientoHTML,folios:currentRole==='generalista'?foliosVistaHTML:foliosHTML,base:baseHTML,docs:docsHTML,config:configHTML,finiquitos:finiquitosHTML,incapacidades:incapacidadesHTML,pendientes:pendientesHTML,plantilla:plantillaHTML,usuarios:()=>'<div id="usuarios-loading" style="padding:20px;color:var(--text2)">Cargando...</div>'};
+  const map={altas:altasHTML,baja:bajaHTML,seguimiento:seguimientoHTML,folios:currentRole==='generalista'?foliosVistaHTML:foliosHTML,base:baseHTML,docs:docsHTML,config:configHTML,finiquitos:finiquitosHTML,incapacidades:incapacidadesHTML,pendientes:pendientesHTML,plantilla:plantillaHTML,indicadores:indicadoresHTML,usuarios:()=>'<div id="usuarios-loading" style="padding:20px;color:var(--text2)">Cargando...</div>'};
   const _roleTabsR = currentRole==='admin' ? TABS_ADM :
                      currentRole==='generalista' ? TABS_GEN :
                      currentRole==='reclutador' ? TABS_REC :
@@ -7559,14 +7565,10 @@ function loadConfig(){
     const n=localStorage.getItem('afimex-config-nominas');
     if(n){
       const saved=JSON.parse(n);
-      // Keep saved records (have real salaries) but add any new ones from code not in saved
-      const savedKeys=new Set(saved.map(r=>(r.puesto||'').toLowerCase().trim()+'|'+(r.oficina||'').toLowerCase().trim()));
-      const merged=[...saved];
-      DATA_NOMINAS.forEach(function(r){
-        const k=(r.puesto||'').toLowerCase().trim()+'|'+(r.oficina||'').toLowerCase().trim();
-        if(!savedKeys.has(k)) merged.push(r);
-      });
-      DATA_NOMINAS.splice(0,DATA_NOMINAS.length,...merged);
+      if(saved && saved.length>0){
+        // Usar directamente lo guardado (que ya viene de Drive vía Bajar o autosync)
+        DATA_NOMINAS.splice(0,DATA_NOMINAS.length,...saved);
+      }
     }
   }catch(e){}
   try{const i=localStorage.getItem('afimex-config-iata');if(i){const d=JSON.parse(i);Object.keys(IATA_MAP).forEach(k=>delete IATA_MAP[k]);Object.assign(IATA_MAP,d);}}catch(e){}
@@ -9333,6 +9335,7 @@ function penAgregarComentario(id){
             if(JSON.stringify(PUESTOS_POR_OFICINA)!==antesP) huboCambios=true;
           } else if(hoja==='Cat_Nominas' && Array.isArray(datos) && datos.length>0){
             const antesN = JSON.stringify(DATA_NOMINAS);
+            // Reemplazar completamente — Drive es la fuente de verdad
             DATA_NOMINAS.splice(0, DATA_NOMINAS.length, ...datos);
             localStorage.setItem('afimex-config-nominas', JSON.stringify(DATA_NOMINAS));
             if(JSON.stringify(DATA_NOMINAS)!==antesN) huboCambios=true;
@@ -9966,6 +9969,275 @@ function plantillaImportarActivos(){
   syncPlantilla();
   render();
   showToast(`✓ ${asignados} empleados importados a la plantilla`,'#16a34a');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// MÓDULO INDICADORES
+// ═══════════════════════════════════════════════════════════════════════════
+
+const MESES_LABELS = ['ENE','FEB','MAR','ABR','MAY','JUN','JUL','AGO','SEP','OCT','NOV','DIC'];
+
+function indicadoresHTML(){
+  const subTab = window._indTab || 'nominas';
+  const stBtn = (id,lbl) => `<button onclick="window._indTab='${id}';render()" style="padding:10px 20px;border:none;background:${subTab===id?'var(--afimex-blue)':'transparent'};color:${subTab===id?'white':'var(--text2)'};font-weight:${subTab===id?'700':'400'};font-size:13px;cursor:pointer;border-bottom:${subTab===id?'2px solid var(--afimex-blue)':'2px solid transparent'};transition:all .15s">${lbl}</button>`;
+  const tabBar = `<div style="display:flex;gap:0;border-bottom:2px solid var(--border);margin-bottom:20px">${stBtn('nominas','💰 Nóminas')}${stBtn('reclutamiento','🎯 Reclutamiento')}${stBtn('capacitacion','📚 Capacitación')}</div>`;
+  if(subTab==='nominas') return tabBar + indicadoresNominasHTML();
+  const lbl = subTab==='reclutamiento'?'🎯 Módulo de Reclutamiento':'📚 Módulo de Capacitación';
+  return tabBar+`<div class="empty-state" style="padding:60px 0"><div style="font-size:40px;margin-bottom:12px">${subTab==='reclutamiento'?'🎯':'📚'}</div><div style="font-size:16px;font-weight:600;color:var(--text2)">${lbl}</div><div style="font-size:13px;color:var(--text2);margin-top:6px">Próximamente</div></div>`;
+}
+
+function indicadoresNominasHTML(){
+  const anio = window._indAnio || '2026';
+  const anioAnt = String(parseInt(anio)-1);
+  const datos = indicadoresNominasDB[anio] || {};
+  const datosAnt = indicadoresNominasDB[anioAnt] || {};
+  const fmt$ = n => (!n&&n!==0)||n===''?'—':'$'+Number(n).toLocaleString('es-MX',{minimumFractionDigits:2,maximumFractionDigits:2});
+  const fmtPct = n => (!n&&n!==0)||n===''?'—':(Number(n)*100).toFixed(2)+'%';
+  const fmtN = n => (!n&&n!==0)?'—':Number(n).toLocaleString('es-MX');
+
+  // Finiquitos del sistema por mes
+  const finiquitosPorMes = {};
+  (finiquitosDB||[]).forEach(f=>{
+    const fecha = f.fechaBaja||f.fecha||'';
+    if(!fecha) return;
+    const d = new Date(fecha.includes('T')?fecha:fecha+'T12:00:00');
+    if(String(d.getFullYear())!==anio) return;
+    const fMes = MESES_LABELS[d.getMonth()];
+    if(!fMes) return;
+    if(!finiquitosPorMes[fMes]) finiquitosPorMes[fMes]=0;
+    finiquitosPorMes[fMes]+= parseFloat(f.totalFiniquito||f.total||f.monto||0);
+  });
+
+  const hayDatos = Object.keys(datos).some(m=>datos[m]&&datos[m].total>0);
+
+  // KPIs
+  const mesesConDatos = MESES_LABELS.filter(m=>datos[m]&&datos[m].total>0);
+  const sum = k => mesesConDatos.reduce((s,m)=>s+(datos[m][k]||0),0);
+  const avg = k => mesesConDatos.length>0?sum(k)/mesesConDatos.length:0;
+  const totalAcum = sum('total');
+  const ventaAcum = sum('venta');
+  const pctProm = ventaAcum>0?totalAcum/ventaAcum:0;
+  const finAcum = Object.values(finiquitosPorMes).reduce((s,v)=>s+v,0);
+  const hcProm = mesesConDatos.length>0?Math.round(avg('pg')):0;
+
+  return `
+<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:20px">
+  <div>
+    <div style="font-size:18px;font-weight:700;color:var(--afimex-blue)">Indicadores de Nómina</div>
+    <div style="font-size:12px;color:var(--text2);margin-top:2px">Comparativo ${anio} vs ${anioAnt}</div>
+  </div>
+  <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+    <div style="display:flex;align-items:center;gap:6px">
+      <label style="font-size:12px;color:var(--text2);font-weight:500">Año:</label>
+      <select onchange="window._indAnio=this.value;render()" style="border:1px solid var(--border2);border-radius:var(--radius-sm);padding:6px 10px;font-size:13px">
+        ${['2024','2025','2026','2027'].map(a=>`<option value="${a}" ${a===anio?'selected':''}>${a}</option>`).join('')}
+      </select>
+    </div>
+    <label style="display:inline-flex;align-items:center;gap:8px;padding:8px 16px;background:var(--afimex-orange);color:white;border-radius:var(--radius-sm);font-size:13px;font-weight:600;cursor:pointer">
+      📂 Cargar Excel
+      <input type="file" accept=".xlsx,.xls" style="display:none" onchange="indicadoresCargarExcel(this,'${anio}')">
+    </label>
+    ${hayDatos?`<button onclick="indicadoresBorrarAnio('${anio}')" style="padding:8px 14px;background:#fff1f2;border:1px solid #fecdd3;color:#e11d48;border-radius:var(--radius-sm);font-size:12px;cursor:pointer">🗑 Borrar ${anio}</button>`:''}
+  </div>
+</div>
+
+${!hayDatos?`<div style="background:var(--afimex-blue-light);border:1px solid #bfdbfe;border-radius:var(--radius);padding:32px;text-align:center">
+  <div style="font-size:36px;margin-bottom:10px">📂</div>
+  <div style="font-size:15px;font-weight:600;color:var(--afimex-blue);margin-bottom:6px">Sin datos para ${anio}</div>
+  <div style="font-size:13px;color:var(--text2)">Carga el Excel de indicadores. El sistema leerá la hoja <strong>DESGLOCE NOM</strong> automáticamente.</div>
+</div>`:`
+
+<div class="stats-row" style="margin-bottom:20px">
+  <div class="stat-card"><div class="stat-label">Nómina acumulada ${anio}</div><div class="stat-value" style="font-size:16px;color:var(--afimex-blue)">${fmt$(totalAcum)}</div></div>
+  <div class="stat-card"><div class="stat-label">Headcount promedio</div><div class="stat-value" style="color:#16a34a">${fmtN(hcProm)}</div></div>
+  <div class="stat-card"><div class="stat-label">% Nómina vs Venta (prom)</div><div class="stat-value" style="color:var(--afimex-orange)">${fmtPct(pctProm)}</div></div>
+  <div class="stat-card"><div class="stat-label">Finiquitos acumulados</div><div class="stat-value" style="color:#dc2626">${fmt$(finAcum)}</div></div>
+</div>
+
+<div style="background:white;border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;margin-bottom:20px">
+  <div style="background:var(--afimex-orange);padding:10px 16px"><div style="font-size:13px;font-weight:700;color:white;text-transform:uppercase;letter-spacing:.5px">MENSUAL ${anio}</div></div>
+  <div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:11.5px">
+    <thead><tr>
+      ${['MES','PA','PG','VENTA','% vs Nóm','SALARIO','OTROS BENEF.','EXTRAORD.','ACLARAC.','ENTREGAS','RECOLEC.','BONOS','TOTAL '+anio,'TOTAL '+anioAnt,'SEMANA','QUINCENA','CORTE'].map((h,i)=>`<th style="padding:7px 8px;border:1px solid var(--border);white-space:nowrap;background:${i>=12&&i<=13?'#1e3a5f':'var(--afimex-blue)'};color:white;text-align:${i>=1&&i<=2?'center':'right'}">${h}</th>`).join('')}
+    </tr></thead>
+    <tbody>
+      ${MESES_LABELS.map((mes,i)=>{
+        const d=datos[mes]; const da=datosAnt[mes];
+        const bg=i%2===0?'white':'#f9fafb';
+        if(!d||!d.total) return `<tr style="background:${bg}"><td style="padding:7px 8px;border:1px solid var(--border);font-weight:700;color:var(--afimex-blue)">${mes}</td><td colspan="16" style="padding:7px 8px;border:1px solid var(--border);color:#94a3b8;text-align:center;font-size:11px">Sin datos</td></tr>`;
+        const pc=d.pctNomina>0.35?'#dc2626':d.pctNomina>0.30?'#f59e0b':'#16a34a';
+        return `<tr style="background:${bg}">
+          <td style="padding:7px 8px;border:1px solid var(--border);font-weight:700;color:var(--afimex-blue)">${mes}</td>
+          <td style="padding:7px 8px;border:1px solid var(--border);text-align:center">${fmtN(d.pa)}</td>
+          <td style="padding:7px 8px;border:1px solid var(--border);text-align:center">${fmtN(d.pg)}</td>
+          <td style="padding:7px 8px;border:1px solid var(--border);text-align:right">${fmt$(d.venta)}</td>
+          <td style="padding:7px 8px;border:1px solid var(--border);text-align:center;font-weight:700;color:${pc}">${fmtPct(d.pctNomina)}</td>
+          <td style="padding:7px 8px;border:1px solid var(--border);text-align:right">${fmt$(d.salario)}</td>
+          <td style="padding:7px 8px;border:1px solid var(--border);text-align:right">${fmt$(d.otrosBeneficios)}</td>
+          <td style="padding:7px 8px;border:1px solid var(--border);text-align:right">${fmt$(d.extraordinarios)}</td>
+          <td style="padding:7px 8px;border:1px solid var(--border);text-align:right">${fmt$(d.aclaraciones)}</td>
+          <td style="padding:7px 8px;border:1px solid var(--border);text-align:right">${fmt$(d.entregas)}</td>
+          <td style="padding:7px 8px;border:1px solid var(--border);text-align:right">${fmt$(d.recolecciones)}</td>
+          <td style="padding:7px 8px;border:1px solid var(--border);text-align:right">${fmt$(d.bonos)}</td>
+          <td style="padding:7px 8px;border:1px solid var(--border);text-align:right;font-weight:700;color:var(--afimex-blue)">${fmt$(d.total)}</td>
+          <td style="padding:7px 8px;border:1px solid var(--border);text-align:right;color:#6b7280">${da&&da.total?fmt$(da.total):'—'}</td>
+          <td style="padding:7px 8px;border:1px solid var(--border);text-align:right">${fmt$(d.semana)}</td>
+          <td style="padding:7px 8px;border:1px solid var(--border);text-align:right">${fmt$(d.quincena)}</td>
+          <td style="padding:7px 8px;border:1px solid var(--border);text-align:center;font-size:10px">${d.corte||'—'}</td>
+        </tr>`;
+      }).join('')}
+    </tbody>
+  </table></div>
+</div>
+
+${mesesConDatos.length>0?`
+<div style="background:white;border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;margin-bottom:20px">
+  <div style="background:#1e3a5f;padding:10px 16px"><div style="font-size:13px;font-weight:700;color:white;text-transform:uppercase;letter-spacing:.5px">ACUMULADO Y PROMEDIO ${anio}</div></div>
+  <div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:11.5px">
+    <thead><tr>${['SECCIÓN','PA','HC','VENTA','% vs NOM','SALARIO','OTROS','EXTRAORD.','ACLARAC.','ENTREGAS','RECOLEC.','BONOS','TOTAL'].map(h=>`<th style="padding:7px 8px;border:1px solid var(--border);background:#1e3a5f;color:white;text-align:right">${h}</th>`).join('')}</tr></thead>
+    <tbody>
+      <tr style="background:#eff6ff;font-weight:700">
+        <td style="padding:7px 8px;border:1px solid var(--border);color:var(--afimex-blue)">TOTAL</td>
+        <td style="padding:7px 8px;border:1px solid var(--border);text-align:right">${fmtN(sum('pa'))}</td>
+        <td style="padding:7px 8px;border:1px solid var(--border);text-align:right">${fmtN(sum('pg'))}</td>
+        <td style="padding:7px 8px;border:1px solid var(--border);text-align:right">${fmt$(sum('venta'))}</td>
+        <td style="padding:7px 8px;border:1px solid var(--border);text-align:right;color:var(--afimex-orange)">${fmtPct(ventaAcum>0?totalAcum/ventaAcum:0)}</td>
+        ${['salario','otrosBeneficios','extraordinarios','aclaraciones','entregas','recolecciones','bonos','total'].map(k=>`<td style="padding:7px 8px;border:1px solid var(--border);text-align:right${k==='total'?';color:var(--afimex-blue)':''}">${fmt$(sum(k))}</td>`).join('')}
+      </tr>
+      <tr style="background:#fef9f0;font-weight:700">
+        <td style="padding:7px 8px;border:1px solid var(--border);color:var(--afimex-orange)">PROMEDIO</td>
+        <td style="padding:7px 8px;border:1px solid var(--border);text-align:right">${fmtN(Math.round(avg('pa')))}</td>
+        <td style="padding:7px 8px;border:1px solid var(--border);text-align:right">${fmtN(Math.round(avg('pg')))}</td>
+        <td style="padding:7px 8px;border:1px solid var(--border);text-align:right">${fmt$(avg('venta'))}</td>
+        <td style="padding:7px 8px;border:1px solid var(--border);text-align:right;color:var(--afimex-orange)">${fmtPct(avg('venta')>0?avg('total')/avg('venta'):0)}</td>
+        ${['salario','otrosBeneficios','extraordinarios','aclaraciones','entregas','recolecciones','bonos','total'].map(k=>`<td style="padding:7px 8px;border:1px solid var(--border);text-align:right${k==='total'?';color:var(--afimex-orange)':''}">${fmt$(avg(k))}</td>`).join('')}
+      </tr>
+    </tbody>
+  </table></div>
+</div>`:''}
+
+<div style="background:white;border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;margin-bottom:20px">
+  <div style="background:var(--afimex-blue);padding:10px 16px"><div style="font-size:13px;font-weight:700;color:white;text-transform:uppercase;letter-spacing:.5px">FINIQUITOS Y COSTO DE ROTACIÓN ${anio}</div></div>
+  <div style="padding:16px;display:grid;grid-template-columns:1fr 1fr;gap:20px">
+    <div><table style="width:100%;border-collapse:collapse;font-size:12px">
+      <thead><tr>
+        <th style="padding:6px 10px;background:var(--afimex-blue);color:white;border:1px solid var(--border)">MES</th>
+        <th style="padding:6px 10px;background:var(--afimex-blue);color:white;border:1px solid var(--border);text-align:right">${anio}</th>
+        <th style="padding:6px 10px;background:#374151;color:white;border:1px solid var(--border);text-align:right">${anioAnt}</th>
+      </tr></thead>
+      <tbody>
+        ${MESES_LABELS.map((m,i)=>`<tr style="background:${i%2===0?'white':'#f9fafb'}">
+          <td style="padding:6px 10px;border:1px solid var(--border);font-weight:600">${m}</td>
+          <td style="padding:6px 10px;border:1px solid var(--border);text-align:right">${finiquitosPorMes[m]?fmt$(finiquitosPorMes[m]):'$\u00a0-'}</td>
+          <td style="padding:6px 10px;border:1px solid var(--border);text-align:right;color:#6b7280">—</td>
+        </tr>`).join('')}
+        <tr style="background:#eff6ff;font-weight:700">
+          <td style="padding:6px 10px;border:1px solid var(--border);color:var(--afimex-blue)">TOTAL</td>
+          <td style="padding:6px 10px;border:1px solid var(--border);text-align:right;color:var(--afimex-blue)">${fmt$(finAcum)}</td>
+          <td style="padding:6px 10px;border:1px solid var(--border);text-align:right">—</td>
+        </tr>
+      </tbody>
+    </table></div>
+    <div>
+      ${(()=>{
+        const bajasSV=(finiquitosDB||[]).filter(f=>{const d=new Date((f.fechaBaja||f.fecha||'')+'T12:00:00');return String(d.getFullYear())===anio&&f.tipoBaja==='SV';}).length;
+        const bajasAT=(finiquitosDB||[]).filter(f=>{const d=new Date((f.fechaBaja||f.fecha||'')+'T12:00:00');return String(d.getFullYear())===anio&&f.tipoBaja==='AT';}).length;
+        const bajasTC=(finiquitosDB||[]).filter(f=>{const d=new Date((f.fechaBaja||f.fecha||'')+'T12:00:00');return String(d.getFullYear())===anio&&f.tipoBaja==='TC';}).length;
+        const altasOp=db.filter(r=>{const d=new Date((r.fechaIngreso||'')+'T12:00:00');return String(d.getFullYear())===anio&&(r.puesto||'').toLowerCase().includes('operador');}).length;
+        const altasOtras=db.filter(r=>{const d=new Date((r.fechaIngreso||'')+'T12:00:00');return String(d.getFullYear())===anio&&!(r.puesto||'').toLowerCase().includes('operador');}).length;
+        return `<table style="border-collapse:collapse;font-size:13px;margin-bottom:16px;width:auto">
+          ${[['Altas de operadores',altasOp,'var(--afimex-blue)'],['Altas operativas',altasOtras,'var(--afimex-blue)'],['Bajas SV',bajasSV,'#dc2626'],['Bajas AT',bajasAT,'#dc2626'],['Bajas TC',bajasTC,'#dc2626']].map(([l,v,c])=>`<tr><td style="padding:6px 14px;background:${c};color:white;font-weight:600;border:1px solid rgba(0,0,0,.1)">${l}</td><td style="padding:6px 18px;border:1px solid var(--border);font-weight:700;text-align:center">${v}</td></tr>`).join('')}
+        </table>
+        <div style="background:#fef2f2;border:1px solid #fecaca;border-radius:var(--radius-sm);padding:14px 16px">
+          <div style="font-size:12px;color:#dc2626;font-weight:600;margin-bottom:4px">Costo total de rotación de personal</div>
+          <div style="font-size:22px;font-weight:700;color:#dc2626">${fmt$(finAcum)}</div>
+        </div>`;
+      })()}
+    </div>
+  </div>
+</div>
+`}`;
+}
+
+function indicadoresCargarExcel(input, anio){
+  const file = input.files[0];
+  if(!file) return;
+  showToast('⏳ Leyendo Excel...','#1A5FA8');
+  const reader = new FileReader();
+  reader.onload = function(e){
+    const data = new Uint8Array(e.target.result);
+    if(typeof XLSX === 'undefined'){
+      const script = document.createElement('script');
+      script.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+      script.onload = () => indicadoresProcesarExcel(data, anio);
+      script.onerror = () => showToast('Error cargando librería de Excel','#dc2626');
+      document.head.appendChild(script);
+    } else {
+      indicadoresProcesarExcel(data, anio);
+    }
+  };
+  reader.onerror = () => showToast('Error leyendo el archivo','#dc2626');
+  reader.readAsArrayBuffer(file);
+  input.value='';
+}
+
+function indicadoresProcesarExcel(data, anio){
+  try{
+    const wb = XLSX.read(data, {type:'array'});
+    const hojaNom = wb.SheetNames.find(n=>n.trim().toUpperCase().startsWith('DESGLOCE NOM'));
+    if(!hojaNom){ showToast('No encontré la hoja "DESGLOCE NOM" en el Excel','#dc2626'); return; }
+    const ws = wb.Sheets[hojaNom];
+    const rows = XLSX.utils.sheet_to_json(ws, {header:1, defval:null, raw:false});
+
+    // Encontrar fila header (tiene 'MES' en col 0)
+    let hRow = -1;
+    for(let i=0;i<rows.length;i++){
+      if((rows[i][0]||'').toString().trim().toUpperCase()==='MES'){hRow=i;break;}
+    }
+    if(hRow===-1){ showToast('No encontré la fila de encabezados (MES) en DESGLOCE NOM','#dc2626'); return; }
+
+    if(!indicadoresNominasDB[anio]) indicadoresNominasDB[anio]={};
+    const anioAnt = String(parseInt(anio)-1);
+    if(!indicadoresNominasDB[anioAnt]) indicadoresNominasDB[anioAnt]={};
+
+    let leidos=0;
+    for(let i=hRow+1;i<rows.length;i++){
+      const row=rows[i];
+      if(!row||!row[0]) continue;
+      const mes=(row[0]||'').toString().trim().toUpperCase().slice(0,3);
+      if(!MESES_LABELS.includes(mes)) continue;
+      const pf = v => { const n=parseFloat((v||'').toString().replace(/[$,%]/g,'')||0); return isNaN(n)?0:n; };
+      indicadoresNominasDB[anio][mes]={
+        pa:pf(row[1]),pg:pf(row[2]),venta:pf(row[3]),
+        pctNomina:pf(row[4]),pctVsAnterior:pf(row[5]),
+        salario:pf(row[7]),otrosBeneficios:pf(row[8]),
+        extraordinarios:pf(row[9]),aclaraciones:pf(row[10]),
+        entregas:pf(row[11]),recolecciones:pf(row[12]),
+        bonos:pf(row[13]),total:pf(row[14]),
+        totalAnterior:pf(row[15]),semana:pf(row[16]),
+        quincena:pf(row[17]),corte:(row[18]||'').toString().trim(),
+      };
+      // Guardar total año anterior
+      const totAnt=pf(row[15]);
+      if(totAnt>0){ if(!indicadoresNominasDB[anioAnt][mes]) indicadoresNominasDB[anioAnt][mes]={}; indicadoresNominasDB[anioAnt][mes].total=totAnt; }
+      leidos++;
+    }
+
+    localStorage.setItem('afimex-indicadores-nominas',JSON.stringify(indicadoresNominasDB));
+    showToast('✓ '+leidos+' meses cargados para '+anio,'#16a34a');
+    render();
+  }catch(err){
+    showToast('Error procesando Excel: '+err.message,'#dc2626');
+    console.error(err);
+  }
+}
+
+function indicadoresBorrarAnio(anio){
+  if(!confirm('¿Borrar todos los datos de nómina de '+anio+'?')) return;
+  delete indicadoresNominasDB[anio];
+  localStorage.setItem('afimex-indicadores-nominas',JSON.stringify(indicadoresNominasDB));
+  render();
+  showToast('Datos de '+anio+' eliminados','#f59e0b');
 }
 
 </script>
