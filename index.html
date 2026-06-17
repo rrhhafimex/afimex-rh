@@ -166,7 +166,7 @@ input.field-ok { border-color: #16a34a; background: #f0fdf4; }
     <div style="display:flex;align-items:center;gap:12px">
       <div>
         <div class="topbar-title">AFIMEX PEOPLE</div>
-        <div class="topbar-sub">V 12.0.0 | Recursos Humanos</div>
+        <div class="topbar-sub">V 12.0.5 | Recursos Humanos</div>
       </div>
     </div>
     <div style="position:absolute;left:50%;transform:translateX(-50%)">
@@ -339,7 +339,32 @@ let db=[], seguimientos=[], foliosData={}, bajaColaborador=null, finiquitosDB=[]
 let plantillaDB={}; // { "Monterrey": { "Auxiliar de Operaciones": { cupo: 12, asignados: [{ numNomina, nombre }] } } }
 let activosDB=[]; // Lista mutable de empleados activos del xlsx (se inicializa desde PLANTILLA_ACTIVOS_SEED)
 let _activosQ='', _activosOf='', _activosPu='', _baseQ='';
-let indicadoresNominasDB = {}; // { "2026": { "ENE": { pa, pg, venta, pctNomina, salario, otrosBeneficios, ... } } }
+// Datos semilla ENE-MAY 2026 embebidos
+const INDICADORES_SEED_2026 = {"ENE":{"pa":349,"pg":365,"venta":23672154,"pctNomina":0.3246,"pctVsAnterior":0.3263,"salario":5771490.12,"otrosBeneficios":258258.29,"extraordinarios":22511.06,"aclaraciones":64201.22,"entregas":448466,"recolecciones":29883,"bonos":1130351.24,"total":7725160.93,"totalAnterior":6084358.04,"semana":4173034.62,"quincena":3552126.31,"corte":"5 S Y 2 Q"},"FEB":{"pa":347,"pg":368,"venta":19757704,"pctNomina":0.4342,"pctVsAnterior":0.3488,"salario":5228557.67,"otrosBeneficios":219110.45,"extraordinarios":31826.98,"aclaraciones":24244.04,"entregas":401957,"recolecciones":34012,"bonos":952511.06,"total":6892219.20,"totalAnterior":7301566.48,"semana":3541225.02,"quincena":3350994.18,"corte":"4 S Y 2 Q"},"MAR":{"pa":347,"pg":366,"venta":22227074,"pctNomina":0.3329,"pctVsAnterior":0.2986,"salario":5128857.02,"otrosBeneficios":343902.07,"extraordinarios":42944.73,"aclaraciones":14955.78,"entregas":353937,"recolecciones":25893,"bonos":727443.70,"total":6637933.30,"totalAnterior":6316865.80,"semana":3240932.46,"quincena":3397000.84,"corte":"4 S Y 2 Q"},"ABR":{"pa":347,"pg":372,"venta":21534554,"pctNomina":0.3581,"pctVsAnterior":0.3467,"salario":5876064.57,"otrosBeneficios":154494.82,"extraordinarios":72141.02,"aclaraciones":29463.25,"entregas":418988,"recolecciones":29945,"bonos":885502.29,"total":7466598.95,"totalAnterior":6614112.90,"semana":4366968.80,"quincena":3099630.15,"corte":"5 S Y 2 Q"},"MAY":{"pa":347,"pg":373,"venta":23076629,"pctNomina":0.3707,"pctVsAnterior":0.3083,"salario":5440479.27,"otrosBeneficios":241289.52,"extraordinarios":102625.28,"aclaraciones":49715.28,"entregas":422360.50,"recolecciones":27711,"bonos":830773.97,"total":7114954.82,"totalAnterior":7158614.07,"semana":3632347.95,"quincena":3482606.87,"corte":"4 S Y 2 Q"}};
+
+let indicadoresNominasDB = {}; // { "2026": { "ENE": { pa, pg, venta, ... } } }
+
+// Constantes de Costo de Rotación — editables por Admin
+const CR_CONSTANTES_DEFAULT = {
+  // Sueldos promedio mensuales por tipo
+  sueldoChofer:       9988.57,
+  sueldoOperativo:    9988.57,
+  sueldoAdministrativo: 22000,
+  // Costos por proceso (calculados desde mapas de proceso)
+  costoSV:            3737.95,
+  costoTC:            2320.21,
+  costoAT:            87.99,
+  costoAtraccionOp:   19637.79,
+  costoAtraccionAdm:  3743.35,
+  costoContratacion:  1396.60,
+  costoAlta:          14659.44,
+  costoCapacitacion:  2887.50,
+  // Curva de aprendizaje — pérdida como % del sueldo mensual
+  curvaMes1Pct:       0.30,  // 30% del sueldo (desempeño al 70%)
+  curvaMes2Pct:       0.20,  // 20% del sueldo (desempeño al 80%)
+  curvaMes3Pct:       0.05,  // 5% del sueldo (desempeño al 95%)
+};
+let crConstantes = JSON.parse(localStorage.getItem('afimex-cr-constantes')||'null') || Object.assign({}, CR_CONSTANTES_DEFAULT);
 let _foliosOrden={col:'folio',dir:'desc'};
 let nomInput='', nssInput='';
 const today=new Date(); today.setHours(0,0,0,0);
@@ -533,6 +558,11 @@ async function loadData(){
   try{const v=localStorage.getItem('afimex-plantilla');if(v)plantillaDB=JSON.parse(v);}catch(e){plantillaDB={};}
   try{const v=localStorage.getItem('afimex-activos');if(v)activosDB=JSON.parse(v);}catch(e){activosDB=[];}
   try{const v=localStorage.getItem('afimex-indicadores-nominas');if(v)indicadoresNominasDB=JSON.parse(v);}catch(e){indicadoresNominasDB={};}
+  // Aplicar seed 2026 si no hay datos locales para ese año
+  if(!indicadoresNominasDB['2026']||Object.keys(indicadoresNominasDB['2026']).length===0){
+    indicadoresNominasDB['2026']=Object.assign({},INDICADORES_SEED_2026);
+    localStorage.setItem('afimex-indicadores-nominas',JSON.stringify(indicadoresNominasDB));
+  }
 
   // ── Migración automática: buscar datos en TODAS las claves de localStorage ──
   // Útil cuando se abre el archivo desde una ruta diferente (nueva versión)
@@ -6007,6 +6037,7 @@ function _fst(){ return window._finiqState || (window._finiqState = {
   bonosRec:'', bonosRecVal:'',
   otrasPerc:'', otrasPercVal:'',
   indemVal:'',
+  descuentoVacDias: '',
 }); }
 
 function _fset(key, val){ _fst()[key]=val; finiqRefresh(); }
@@ -6645,7 +6676,9 @@ function finiqFormHTML(){
   }
 
   // Percepciones SD (conceptos fijos 19,20,24,403)
-  const p19fac = +(diasVacBase/diasAño*diasDesdeAniv).toFixed(2);
+  const descVacDias = Math.max(0, parseFloat(s.descuentoVacDias)||0); // días adelantados a descontar
+  const diasDesdeAnivNeto = Math.max(0, diasDesdeAniv - descVacDias * (diasAño / diasVacBase || 1));
+  const p19fac = +(diasVacBase/diasAño*diasDesdeAnivNeto).toFixed(2);
   const p19val = +(sdL1*p19fac).toFixed(2);
   const p20fac = +(p19fac*0.25).toFixed(2);
   const p20val = +(sdL1*p20fac).toFixed(2);
@@ -6653,7 +6686,7 @@ function finiqFormHTML(){
   const p24val = +(sdL1*p24fac).toFixed(2);
 
   // Presupuestal
-  const pp19val = +(sdL2*(diasVacBase/diasAño*diasDesdeAniv)).toFixed(2);
+  const pp19val = +(sdL2*(diasVacBase/diasAño*diasDesdeAnivNeto)).toFixed(2);
   const pp20val = +(pp19val*0.25).toFixed(2);
   const pp24val = +(sdL2*(diasAguiOv/diasAño*diasAguinaldoAuto)).toFixed(2);
   const ppBonosNum  = parseFloat(s.bonosRecVal)||0;
@@ -6843,6 +6876,20 @@ function finiqFormHTML(){
         <div style="font-size:9px;font-weight:700;opacity:.85">PROP. AGUINALDO</div>
         <div id="finiq-dias-agui" style="font-size:20px;font-weight:700">${diasAguinaldoAuto}</div>
         <div style="font-size:9px;opacity:.75">días desde inicio año</div></div>
+    </div>
+    <!-- Descuento de vacaciones adelantadas -->
+    <div style="margin-top:12px;background:#fef9f0;border:2px solid var(--afimex-orange);border-radius:var(--radius-sm);padding:12px 14px;display:flex;align-items:center;gap:16px;flex-wrap:wrap">
+      <div style="flex:1;min-width:200px">
+        <div style="font-size:11px;font-weight:700;color:var(--afimex-orange);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">Descuento de vacaciones adelantadas</div>
+        <div style="font-size:11px;color:var(--text2)">Días que se restan al concepto 19 (vacaciones a tiempo)</div>
+      </div>
+      <div style="display:flex;align-items:center;gap:10px">
+        <input type="number" min="0" step="1" placeholder="0" value="${s.descuentoVacDias||''}"
+          oninput="_fst().descuentoVacDias=this.value" onchange="finiqRefresh()"
+          style="width:80px;padding:8px 10px;border:2px solid var(--afimex-orange);border-radius:var(--radius-sm);font-size:16px;font-weight:700;text-align:center;color:var(--afimex-orange);background:white">
+        <span style="font-size:13px;color:var(--text2)">días</span>
+        ${descVacDias>0?`<span style="font-size:12px;background:#fff1f2;color:#dc2626;border:1px solid #fecdd3;padding:4px 10px;border-radius:99px;font-weight:600">−${descVacDias} días aplicados al concepto 19</span>`:''}
+      </div>
     </div>
   </div>
 
@@ -9980,15 +10027,18 @@ const MESES_LABELS = ['ENE','FEB','MAR','ABR','MAY','JUN','JUL','AGO','SEP','OCT
 function indicadoresHTML(){
   const subTab = window._indTab || 'nominas';
   const stBtn = (id,lbl) => `<button onclick="window._indTab='${id}';render()" style="padding:10px 20px;border:none;background:${subTab===id?'var(--afimex-blue)':'transparent'};color:${subTab===id?'white':'var(--text2)'};font-weight:${subTab===id?'700':'400'};font-size:13px;cursor:pointer;border-bottom:${subTab===id?'2px solid var(--afimex-blue)':'2px solid transparent'};transition:all .15s">${lbl}</button>`;
-  const tabBar = `<div style="display:flex;gap:0;border-bottom:2px solid var(--border);margin-bottom:20px">${stBtn('nominas','💰 Nóminas')}${stBtn('reclutamiento','🎯 Reclutamiento')}${stBtn('capacitacion','📚 Capacitación')}</div>`;
-  if(subTab==='nominas') return tabBar + indicadoresNominasHTML();
-  const lbl = subTab==='reclutamiento'?'🎯 Módulo de Reclutamiento':'📚 Módulo de Capacitación';
+  const tabBar = `<div style="display:flex;gap:0;border-bottom:2px solid var(--border);margin-bottom:20px">${stBtn('nominas','💰 Nóminas')}${stBtn('finiquitos_ind','📋 Finiquitos')}${stBtn('costo_rotacion','🔄 Costo de Rotación')}${stBtn('reclutamiento','🎯 Reclutamiento')}${stBtn('capacitacion','📚 Capacitación')}</div>`;
+  if(subTab==='nominas')        return tabBar + indicadoresNominasHTML();
+  if(subTab==='finiquitos_ind') return tabBar + indicadoresFiniquitosHTML();
+  if(subTab==='costo_rotacion') return tabBar + indicadoresCRHTML();
+  const lbl = subTab==='reclutamiento'?'🎯 Reclutamiento':'📚 Capacitación';
   return tabBar+`<div class="empty-state" style="padding:60px 0"><div style="font-size:40px;margin-bottom:12px">${subTab==='reclutamiento'?'🎯':'📚'}</div><div style="font-size:16px;font-weight:600;color:var(--text2)">${lbl}</div><div style="font-size:13px;color:var(--text2);margin-top:6px">Próximamente</div></div>`;
 }
 
 function indicadoresNominasHTML(){
   const anio = window._indAnio || '2026';
   const anioAnt = String(parseInt(anio)-1);
+  const mes = window._indMes || '';  // '' = todos los meses (vista anual)
   const datos = indicadoresNominasDB[anio] || {};
   const datosAnt = indicadoresNominasDB[anioAnt] || {};
   const fmt$ = n => (!n&&n!==0)||n===''?'—':'$'+Number(n).toLocaleString('es-MX',{minimumFractionDigits:2,maximumFractionDigits:2});
@@ -10005,12 +10055,10 @@ function indicadoresNominasHTML(){
     const fMes = MESES_LABELS[d.getMonth()];
     if(!fMes) return;
     if(!finiquitosPorMes[fMes]) finiquitosPorMes[fMes]=0;
-    finiquitosPorMes[fMes]+= parseFloat(f.totalFiniquito||f.total||f.monto||0);
+    finiquitosPorMes[fMes]+= parseFloat(f.totalFiniquito||f.neto||f.total||f.monto||0);
   });
 
   const hayDatos = Object.keys(datos).some(m=>datos[m]&&datos[m].total>0);
-
-  // KPIs
   const mesesConDatos = MESES_LABELS.filter(m=>datos[m]&&datos[m].total>0);
   const sum = k => mesesConDatos.reduce((s,m)=>s+(datos[m][k]||0),0);
   const avg = k => mesesConDatos.length>0?sum(k)/mesesConDatos.length:0;
@@ -10020,11 +10068,12 @@ function indicadoresNominasHTML(){
   const finAcum = Object.values(finiquitosPorMes).reduce((s,v)=>s+v,0);
   const hcProm = mesesConDatos.length>0?Math.round(avg('pg')):0;
 
-  return `
+  // Selector compartido año/mes/PPT
+  const selectorBar = `
 <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:20px">
   <div>
     <div style="font-size:18px;font-weight:700;color:var(--afimex-blue)">Indicadores de Nómina</div>
-    <div style="font-size:12px;color:var(--text2);margin-top:2px">Comparativo ${anio} vs ${anioAnt}</div>
+    <div style="font-size:12px;color:var(--text2);margin-top:2px">Comparativo ${anio} vs ${anioAnt}${mes?' — '+mes:''}</div>
   </div>
   <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
     <div style="display:flex;align-items:center;gap:6px">
@@ -10033,15 +10082,74 @@ function indicadoresNominasHTML(){
         ${['2024','2025','2026','2027'].map(a=>`<option value="${a}" ${a===anio?'selected':''}>${a}</option>`).join('')}
       </select>
     </div>
+    <div style="display:flex;align-items:center;gap:6px">
+      <label style="font-size:12px;color:var(--text2);font-weight:500">Mes:</label>
+      <select onchange="window._indMes=this.value;render()" style="border:1px solid var(--border2);border-radius:var(--radius-sm);padding:6px 10px;font-size:13px">
+        <option value="" ${mes===''?'selected':''}>Todos</option>
+        ${MESES_LABELS.map(m=>`<option value="${m}" ${m===mes?'selected':''}>${m}</option>`).join('')}
+      </select>
+    </div>
     <label style="display:inline-flex;align-items:center;gap:8px;padding:8px 16px;background:var(--afimex-orange);color:white;border-radius:var(--radius-sm);font-size:13px;font-weight:600;cursor:pointer">
       📂 Cargar Excel
       <input type="file" accept=".xlsx,.xls" style="display:none" onchange="indicadoresCargarExcel(this,'${anio}')">
     </label>
+    ${hayDatos?`<button onclick="indicadoresDescargarPDF('${anio}','${mes||MESES_LABELS[new Date().getMonth()]}')" style="padding:8px 16px;background:#7c3aed;color:white;border:none;border-radius:var(--radius-sm);font-size:13px;font-weight:600;cursor:pointer">📄 Descargar PDF</button>`:''}
     ${hayDatos?`<button onclick="indicadoresBorrarAnio('${anio}')" style="padding:8px 14px;background:#fff1f2;border:1px solid #fecdd3;color:#e11d48;border-radius:var(--radius-sm);font-size:12px;cursor:pointer">🗑 Borrar ${anio}</button>`:''}
   </div>
-</div>
+</div>`;
 
-${!hayDatos?`<div style="background:var(--afimex-blue-light);border:1px solid #bfdbfe;border-radius:var(--radius);padding:32px;text-align:center">
+  // Vista de mes específico
+  if(mes && datos[mes]){
+    const d = datos[mes];
+    const da = datosAnt[mes]||{};
+    const finMes = finiquitosPorMes[mes]||0;
+    const pc = d.pctNomina>0.35?'#dc2626':d.pctNomina>0.30?'#f59e0b':'#16a34a';
+    // Venta manual — permite al usuario ingresar/corregir la venta del mes
+  if(!window._ventaManual) window._ventaManual = {};
+  if(!window._ventaManual[anio]) window._ventaManual[anio] = {};
+  // Usar venta manual si existe, si no usar la del Excel
+  const ventaMes = window._ventaManual[anio][mes] !== undefined
+    ? window._ventaManual[anio][mes]
+    : (d.venta || 0);
+  // Calcular % real con venta actualizada
+  const pctReal = ventaMes > 0 ? d.total / ventaMes : d.pctNomina;
+  const pcColor = pctReal > 0.35 ? '#dc2626' : pctReal > 0.30 ? '#f59e0b' : '#16a34a';
+
+  return selectorBar + `
+<div style="background:white;border:2px solid var(--afimex-orange);border-radius:var(--radius);padding:14px 18px;margin-bottom:16px;display:flex;align-items:center;gap:16px;flex-wrap:wrap">
+  <div style="font-size:12px;font-weight:700;color:var(--afimex-orange);text-transform:uppercase;letter-spacing:.5px;min-width:120px">Venta ${mes} ${anio}</div>
+  <div style="display:flex;align-items:center;gap:8px;flex:1">
+    <span style="font-size:13px;color:var(--text2)">$</span>
+    <input type="number" min="0" step="1000" placeholder="Ingresa la venta del mes..."
+      value="${ventaMes||''}"
+      oninput="if(!window._ventaManual)window._ventaManual={};if(!window._ventaManual['${anio}'])window._ventaManual['${anio}']={};window._ventaManual['${anio}']['${mes}']=parseFloat(this.value)||0;render()"
+      style="flex:1;max-width:260px;padding:8px 12px;border:2px solid var(--afimex-orange);border-radius:var(--radius-sm);font-size:16px;font-weight:700;color:var(--afimex-orange)">
+    ${ventaMes>0?`<span style="font-size:13px;color:var(--text2)">→ <strong style="color:${pcColor}">${fmtPct(pctReal)}</strong> de la venta</span>`:''}
+  </div>
+  ${d.venta&&d.venta!==ventaMes?`<span style="font-size:11px;color:#94a3b8">Excel: ${fmt$(d.venta)}</span>`:''}
+</div>
+<div class="stats-row" style="margin-bottom:20px">
+  <div class="stat-card"><div class="stat-label">Nómina ${mes} ${anio}</div><div class="stat-value" style="color:var(--afimex-blue)">${fmt$(d.total)}</div></div>
+  <div class="stat-card"><div class="stat-label">Nómina ${mes} ${anioAnt}</div><div class="stat-value" style="color:#6b7280">${da.total?fmt$(da.total):'—'}</div></div>
+  <div class="stat-card"><div class="stat-label">Headcount (PG)</div><div class="stat-value" style="color:#16a34a">${fmtN(d.pg)}</div></div>
+  <div class="stat-card"><div class="stat-label">% Nómina vs Venta</div><div class="stat-value" style="color:${pcColor}">${fmtPct(pctReal)}</div></div>
+</div>
+<div style="background:white;border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;margin-bottom:20px">
+  <div style="background:var(--afimex-orange);padding:10px 16px"><div style="font-size:13px;font-weight:700;color:white;text-transform:uppercase">DETALLE — ${mes} ${anio}</div></div>
+  <div style="padding:0">
+    ${[['PA',d.pa,null,true],['PG (Headcount)',d.pg,null,true],['Venta',ventaMes,'$',false],['% Nómina vs Venta',pctReal,'%',false],['Salario',d.salario,'$',false],['Otros Beneficios',d.otrosBeneficios,'$',false],['Extraordinarios',d.extraordinarios,'$',false],['Aclaraciones',d.aclaraciones,'$',false],['Entregas',d.entregas,'$',false],['Recolecciones',d.recolecciones,'$',false],['Bonos',d.bonos,'$',false],['TOTAL NÓMINA',d.total,'$',false],['TOTAL '+anioAnt,da.total||0,'$',false],['Semana',d.semana,'$',false],['Quincena',d.quincena,'$',false],['Corte',d.corte,null,true]].map(([lbl,val,tipo,raw],i)=>`
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:9px 16px;border-bottom:1px solid var(--border);background:${i%2===0?'white':'#f9fafb'}">
+      <span style="font-size:13px;font-weight:${lbl.startsWith('TOTAL')?'700':'400'};color:${lbl.startsWith('TOTAL')?'var(--afimex-blue)':'var(--text)'}">${lbl}</span>
+      <span style="font-size:14px;font-weight:600;color:${lbl==='% Nómina vs Venta'?pc:lbl.startsWith('TOTAL')?'var(--afimex-blue)':'var(--text)'}">
+        ${raw?(val||'—'):(tipo==='$'?fmt$(val):tipo==='%'?fmtPct(val):val)}
+      </span>
+    </div>`).join('')}
+  </div>
+</div>`;
+  } // end if(mes && datos[mes])
+
+  // Vista anual (todos los meses)
+  return selectorBar + (!hayDatos?`<div style="background:var(--afimex-blue-light);border:1px solid #bfdbfe;border-radius:var(--radius);padding:32px;text-align:center">
   <div style="font-size:36px;margin-bottom:10px">📂</div>
   <div style="font-size:15px;font-weight:600;color:var(--afimex-blue);margin-bottom:6px">Sin datos para ${anio}</div>
   <div style="font-size:13px;color:var(--text2)">Carga el Excel de indicadores. El sistema leerá la hoja <strong>DESGLOCE NOM</strong> automáticamente.</div>
@@ -10156,7 +10264,197 @@ ${mesesConDatos.length>0?`
     </div>
   </div>
 </div>
-`}`;
+`);
+}
+
+function indicadoresDescargarPDF(anio, mes){
+  const datos = indicadoresNominasDB[anio]||{};
+  const anioAnt = String(parseInt(anio)-1);
+  const datosAnt = indicadoresNominasDB[anioAnt]||{};
+  const d = datos[mes]||{};
+  const da = datosAnt[mes]||{};
+  const cc = crConstantes;
+
+  // Venta manual si existe
+  const ventaMes = (window._ventaManual&&window._ventaManual[anio]&&window._ventaManual[anio][mes]!==undefined)
+    ? window._ventaManual[anio][mes] : (d.venta||0);
+  const pctReal = ventaMes>0 ? d.total/ventaMes : d.pctNomina;
+
+  const fmt$ = n => '$'+Number(n||0).toLocaleString('es-MX',{minimumFractionDigits:2,maximumFractionDigits:2});
+  const fmtPct = n => (Number(n||0)*100).toFixed(2)+'%';
+  const fmtN = n => Number(n||0).toLocaleString('es-MX');
+  const pctColor = pctReal>0.35?'#dc2626':pctReal>0.30?'#f59e0b':'#16a34a';
+
+  // Finiquitos del mes
+  const finiqMes = (finiquitosDB||[]).filter(f=>{
+    const fecha=f.fechaBaja||f.fecha||'';
+    if(!fecha) return false;
+    const dt=new Date(fecha.includes('T')?fecha:fecha+'T12:00:00');
+    return String(dt.getFullYear())===anio && MESES_LABELS[dt.getMonth()]===mes;
+  }).reduce((s,f)=>s+parseFloat(f.totalFiniquito||f.neto||f.total||f.monto||0),0);
+
+  // Finiquitos acumulados por mes para tabla
+  const finiqPorMes = {};
+  MESES_LABELS.forEach(m=>{ finiqPorMes[m]=0; });
+  (finiquitosDB||[]).forEach(f=>{
+    const fecha=f.fechaBaja||f.fecha||'';
+    if(!fecha) return;
+    const dt=new Date(fecha.includes('T')?fecha:fecha+'T12:00:00');
+    if(String(dt.getFullYear())!==anio) return;
+    const fm=MESES_LABELS[dt.getMonth()];
+    if(fm) finiqPorMes[fm]+=parseFloat(f.totalFiniquito||f.neto||f.total||f.monto||0);
+  });
+  const finiqTotal = Object.values(finiqPorMes).reduce((s,v)=>s+v,0);
+
+  // Bajas del mes
+  const bajasSV=(finiquitosDB||[]).filter(f=>{const dt=new Date((f.fechaBaja||f.fecha||'')+'T12:00:00');return String(dt.getFullYear())===anio&&MESES_LABELS[dt.getMonth()]===mes&&f.tipoBaja==='SV';}).length;
+  const bajasAT=(finiquitosDB||[]).filter(f=>{const dt=new Date((f.fechaBaja||f.fecha||'')+'T12:00:00');return String(dt.getFullYear())===anio&&MESES_LABELS[dt.getMonth()]===mes&&f.tipoBaja==='AT';}).length;
+  const bajasTC=(finiquitosDB||[]).filter(f=>{const dt=new Date((f.fechaBaja||f.fecha||'')+'T12:00:00');return String(dt.getFullYear())===anio&&MESES_LABELS[dt.getMonth()]===mes&&f.tipoBaja==='TC';}).length;
+
+  // CR del mes
+  const crD=(window._crDatos&&window._crDatos[anio]&&window._crDatos[anio][mes])||{bajasSV,bajasAT,bajasTC,altasOp:0,altasOperativas:0,altasAdm:0};
+  const curvaPct=cc.curvaMes1Pct+cc.curvaMes2Pct+cc.curvaMes3Pct;
+  const crTotal=(crD.bajasSV*cc.costoSV+crD.bajasAT*cc.costoAT+crD.bajasTC*cc.costoTC)
+    +(crD.altasOp*cc.costoAtraccionOp+crD.altasAdm*cc.costoAtraccionAdm)
+    +(crD.altasOp+crD.altasOperativas+crD.altasAdm)*(cc.costoContratacion+cc.costoAlta+cc.costoCapacitacion)
+    +(crD.altasOp*cc.sueldoChofer+crD.altasOperativas*cc.sueldoOperativo+crD.altasAdm*cc.sueldoAdministrativo)*curvaPct
+    +finiqMes;
+
+  const logoURL = 'https://rrhhafimex.github.io/afimex-rh/logo_color.png';
+
+  const html = `<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8">
+  <title>Nóminas ${mes} ${anio}</title>
+  <style>
+    *{margin:0;padding:0;box-sizing:border-box;}
+    body{font-family:Calibri,Arial,sans-serif;color:#1a1a2e;background:white;}
+    .page{width:100%;page-break-after:always;padding:0;}
+    /* PORTADA */
+    .cover{display:flex;height:100vh;min-height:540px;}
+    .cover-left{background:#E8650A;width:48%;display:flex;align-items:center;justify-content:center;clip-path:polygon(0 0,85% 0,100% 50%,85% 100%,0 100%);}
+    .cover-title{color:white;font-size:42px;font-weight:900;text-align:left;padding:0 40px 0 60px;line-height:1.2;}
+    .cover-right{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:20px;}
+    .cover-right img{max-width:280px;}
+    .cover-mes{font-size:22px;font-weight:700;color:#E8650A;}
+    /* SLIDES DE CONTENIDO */
+    .slide{padding:30px 36px;min-height:100vh;}
+    .slide-header{background:#E8650A;color:white;font-size:28px;font-weight:700;font-style:italic;padding:10px 20px;margin:-30px -36px 24px;display:flex;align-items:center;gap:16px;}
+    .slide-header img{height:36px;filter:brightness(0) invert(1);}
+    table{width:100%;border-collapse:collapse;font-size:11.5px;}
+    th,td{padding:6px 10px;border:1px solid #ddd;}
+    .th-blue{background:#1A5FA8;color:white;font-weight:700;}
+    .th-dark{background:#374151;color:white;font-weight:700;}
+    .th-orange{background:#E8650A;color:white;font-weight:700;}
+    .tr-alt{background:#f9fafb;}
+    .tr-total{background:#eff6ff;font-weight:700;color:#1A5FA8;}
+    .kpi-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px;}
+    .kpi{background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:12px;text-align:center;}
+    .kpi-label{font-size:10px;color:#64748b;font-weight:600;text-transform:uppercase;margin-bottom:4px;}
+    .kpi-value{font-size:20px;font-weight:800;color:#1A5FA8;}
+    .two-col{display:grid;grid-template-columns:1fr 1fr;gap:20px;}
+    .badge{display:inline-block;padding:2px 10px;border-radius:99px;color:white;font-size:10px;font-weight:700;}
+    .cr-box{background:#fef2f2;border:2px solid #fca5a5;border-radius:8px;padding:16px;margin-top:12px;text-align:center;}
+    .cr-label{font-size:11px;color:#dc2626;font-weight:600;margin-bottom:4px;}
+    .cr-value{font-size:28px;font-weight:900;color:#dc2626;}
+    .section-title{font-size:12px;font-weight:700;color:#1A5FA8;text-transform:uppercase;letter-spacing:.5px;border-bottom:2px solid #E8650A;padding-bottom:4px;margin-bottom:10px;}
+    .arrows{display:flex;gap:4px;justify-content:flex-end;margin-top:16px;}
+    .arr1{width:32px;height:20px;background:#E8650A;clip-path:polygon(0 0,75% 0,100% 50%,75% 100%,0 100%);}
+    .arr2{width:24px;height:20px;background:#1A5FA8;clip-path:polygon(0 0,75% 0,100% 50%,75% 100%,0 100%);}
+    @media print{.page{page-break-after:always;}body{-webkit-print-color-adjust:exact;print-color-adjust:exact;}}
+  </style>
+  </head><body>
+
+  <!-- SLIDE 1: PORTADA -->
+  <div class="page">
+    <div class="cover">
+      <div class="cover-left">
+        <div class="cover-title">PRESENTACIÓN<br>NÓMINAS<br>${anio}</div>
+      </div>
+      <div class="cover-right">
+        <img src="${logoURL}" onerror="this.style.display='none';this.nextSibling.style.display='block'">
+        <div style="display:none;font-size:36px;font-weight:900;color:#1A5FA8">afimex</div>
+        <div class="cover-mes">${mes} ${anio}</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- SLIDE 2: NÓMINAS -->
+  <div class="page">
+    <div class="slide">
+      <div class="slide-header">Nóminas</div>
+      <div class="kpi-grid">
+        <div class="kpi"><div class="kpi-label">PG Headcount</div><div class="kpi-value">${fmtN(d.pg)}</div></div>
+        <div class="kpi"><div class="kpi-label">Venta ${mes}</div><div class="kpi-value" style="font-size:15px">${fmt$(ventaMes)}</div></div>
+        <div class="kpi"><div class="kpi-label">% Nóm vs Venta</div><div class="kpi-value" style="color:${pctColor}">${fmtPct(pctReal)}</div></div>
+        <div class="kpi"><div class="kpi-label">Total Nómina</div><div class="kpi-value" style="font-size:15px">${fmt$(d.total)}</div></div>
+      </div>
+      <table>
+        <thead><tr>
+          <th class="th-blue" style="text-align:left">CONCEPTO</th>
+          <th class="th-blue" style="text-align:right">${mes} ${anio}</th>
+          <th class="th-dark" style="text-align:right">${mes} ${anioAnt}</th>
+        </tr></thead>
+        <tbody>
+          ${[['Salario',d.salario,null],['Otros Beneficios',d.otrosBeneficios,null],['Extraordinarios',d.extraordinarios,null],['Aclaraciones',d.aclaraciones,null],['Entregas',d.entregas,null],['Recolecciones',d.recolecciones,null],['Bonos',d.bonos,null]].map(([l,v],i)=>`
+          <tr class="${i%2===1?'tr-alt':''}"><td>${l}</td><td style="text-align:right">${fmt$(v)}</td><td style="text-align:right">—</td></tr>`).join('')}
+          <tr class="tr-total"><td>TOTAL NÓMINA</td><td style="text-align:right">${fmt$(d.total)}</td><td style="text-align:right">${da.total?fmt$(da.total):'—'}</td></tr>
+          <tr class="tr-alt"><td>Semana</td><td style="text-align:right">${fmt$(d.semana)}</td><td style="text-align:right">—</td></tr>
+          <tr><td>Quincena</td><td style="text-align:right">${fmt$(d.quincena)}</td><td style="text-align:right">—</td></tr>
+          <tr class="tr-alt"><td>Corte</td><td style="text-align:right">${d.corte||'—'}</td><td style="text-align:right">—</td></tr>
+        </tbody>
+      </table>
+      <div class="arrows"><div class="arr1"></div><div class="arr1"></div><div class="arr1"></div><div class="arr2"></div><div class="arr2"></div></div>
+    </div>
+  </div>
+
+  <!-- SLIDE 3: FINIQUITOS Y CR -->
+  <div class="page">
+    <div class="slide">
+      <div class="slide-header">Finiquitos y CR</div>
+      <div class="two-col">
+        <div>
+          <div class="section-title">Finiquitos ${anio}</div>
+          <table>
+            <thead><tr>
+              <th class="th-blue" style="text-align:left">MES</th>
+              <th class="th-blue" style="text-align:right">${anio}</th>
+            </tr></thead>
+            <tbody>
+              ${MESES_LABELS.map((m,i)=>`<tr class="${i%2===1?'tr-alt':''}"><td style="font-weight:${m===mes?'700':'400'};color:${m===mes?'#E8650A':'inherit'}">${m}</td><td style="text-align:right">${finiqPorMes[m]>0?fmt$(finiqPorMes[m]):'$  -'}</td></tr>`).join('')}
+              <tr class="tr-total"><td>TOTAL</td><td style="text-align:right">${fmt$(finiqTotal)}</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div>
+          <div class="section-title">Movimientos — ${mes} ${anio}</div>
+          <table style="margin-bottom:16px">
+            <tbody>
+              ${[['Altas de operadores',crD.altasOp,'#1A5FA8'],['Altas operativas',crD.altasOperativas,'#1A5FA8'],['Altas administrativas',crD.altasAdm,'#1A5FA8'],['Bajas SV',bajasSV,'#dc2626'],['Bajas AT',bajasAT,'#dc2626'],['Bajas TC',bajasTC,'#dc2626']].map(([l,v,c])=>`
+              <tr><td style="background:${c};color:white;font-weight:600;padding:6px 10px">${l}</td><td style="text-align:center;font-weight:700;font-size:16px">${v}</td></tr>`).join('')}
+            </tbody>
+          </table>
+          <table style="margin-bottom:12px">
+            <tbody>
+              <tr><td style="font-style:italic;font-weight:700;color:#1A5FA8">Costo de rotación de personal</td><td style="text-align:right;font-weight:700;color:#E8650A">${fmt$(crTotal-finiqMes)}</td></tr>
+              <tr class="tr-alt"><td>Costo de finiquitos</td><td style="text-align:right">${fmt$(finiqMes)}</td></tr>
+            </tbody>
+          </table>
+          <div class="cr-box">
+            <div class="cr-label">Costo TOTAL de rotación de personal</div>
+            <div class="cr-value">${fmt$(crTotal)}</div>
+          </div>
+        </div>
+      </div>
+      <div class="arrows"><div class="arr1"></div><div class="arr1"></div><div class="arr1"></div><div class="arr2"></div><div class="arr2"></div></div>
+    </div>
+  </div>
+
+  <scr'+'ipt>window.onload=function(){window.print();}<\/scr'+'ipt>
+  </body></html>`;
+
+  const w = window.open('','_blank','width=1000,height=800');
+  if(!w){ showToast('Permite las ventanas emergentes para descargar el PDF','#f59e0b'); return; }
+  w.document.write(html);
+  w.document.close();
 }
 
 function indicadoresCargarExcel(input, anio){
@@ -10238,6 +10536,376 @@ function indicadoresBorrarAnio(anio){
   localStorage.setItem('afimex-indicadores-nominas',JSON.stringify(indicadoresNominasDB));
   render();
   showToast('Datos de '+anio+' eliminados','#f59e0b');
+}
+
+// ── Sub-pestaña: Finiquitos ───────────────────────────────────────────────
+function indicadoresFiniquitosHTML(){
+  const anio = window._indAnio || '2026';
+  const anioAnt = String(parseInt(anio)-1);
+  const mes = window._indMes || '';
+  const fmt$ = n => '$'+Number(n||0).toLocaleString('es-MX',{minimumFractionDigits:2,maximumFractionDigits:2});
+  const fmtN = n => Number(n||0).toLocaleString('es-MX');
+
+  const selectorBar = `<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:20px">
+  <div><div style="font-size:18px;font-weight:700;color:var(--afimex-blue)">Indicadores de Finiquitos</div>
+  <div style="font-size:12px;color:var(--text2);margin-top:2px">Datos extraídos del módulo de Finiquitos${mes?' — '+mes:''}</div></div>
+  <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+    <div style="display:flex;align-items:center;gap:6px"><label style="font-size:12px;color:var(--text2);font-weight:500">Año:</label>
+      <select onchange="window._indAnio=this.value;render()" style="border:1px solid var(--border2);border-radius:var(--radius-sm);padding:6px 10px;font-size:13px">
+        ${['2024','2025','2026','2027'].map(a=>`<option value="${a}" ${a===anio?'selected':''}>${a}</option>`).join('')}
+      </select></div>
+    <div style="display:flex;align-items:center;gap:6px"><label style="font-size:12px;color:var(--text2);font-weight:500">Mes:</label>
+      <select onchange="window._indMes=this.value;render()" style="border:1px solid var(--border2);border-radius:var(--radius-sm);padding:6px 10px;font-size:13px">
+        <option value="" ${mes===''?'selected':''}>Todos</option>
+        ${MESES_LABELS.map(m=>`<option value="${m}" ${m===mes?'selected':''}>${m}</option>`).join('')}
+      </select></div>
+  </div></div>`;
+
+  // Agrupar finiquitos por mes del año seleccionado
+  const porMes = {};
+  const porMesAnt = {};
+  MESES_LABELS.forEach(m=>{ porMes[m]=0; porMesAnt[m]=0; });
+
+  (finiquitosDB||[]).forEach(f=>{
+    const fecha = f.fechaBaja||f.fecha||'';
+    if(!fecha) return;
+    const d = new Date(fecha.includes('T')?fecha:fecha+'T12:00:00');
+    const fAnio = String(d.getFullYear());
+    const fMes  = MESES_LABELS[d.getMonth()];
+    if(!fMes) return;
+    const monto = parseFloat(f.totalFiniquito||f.neto||f.total||f.monto||0);
+    if(fAnio===anio)    porMes[fMes]    += monto;
+    if(fAnio===anioAnt) porMesAnt[fMes] += monto;
+  });
+
+  const totalAnio    = Object.values(porMes).reduce((s,v)=>s+v,0);
+  const totalAnioAnt = Object.values(porMesAnt).reduce((s,v)=>s+v,0);
+  const variacion    = totalAnioAnt>0 ? ((totalAnio-totalAnioAnt)/totalAnioAnt) : null;
+
+  // Conteos por tipo de baja
+  const tiposBaja = {SV:0, AT:0, TC:0};
+  const tiposBajaAnt = {SV:0, AT:0, TC:0};
+  (finiquitosDB||[]).forEach(f=>{
+    const fecha = f.fechaBaja||f.fecha||'';
+    if(!fecha) return;
+    const d = new Date(fecha.includes('T')?fecha:fecha+'T12:00:00');
+    const fAnio = String(d.getFullYear());
+    const tipo = (f.tipoBaja||'').toUpperCase();
+    if(tiposBaja[tipo]!==undefined){
+      if(fAnio===anio)    tiposBaja[tipo]++;
+      if(fAnio===anioAnt) tiposBajaAnt[tipo]++;
+    }
+  });
+  const totalBajas = Object.values(tiposBaja).reduce((s,v)=>s+v,0);
+
+  // Vista de mes específico
+  if(mes){
+    const mVal = porMes[mes]||0;
+    const mAnt = porMesAnt[mes]||0;
+    const vari = mAnt>0?((mVal-mAnt)/mAnt):null;
+    return selectorBar + `
+<div class="stats-row" style="margin-bottom:20px">
+  <div class="stat-card"><div class="stat-label">Finiquitos ${mes} ${anio}</div><div class="stat-value" style="color:#dc2626">${fmt$(mVal)}</div></div>
+  <div class="stat-card"><div class="stat-label">Finiquitos ${mes} ${anioAnt}</div><div class="stat-value" style="color:#6b7280">${mAnt?fmt$(mAnt):'—'}</div></div>
+  <div class="stat-card"><div class="stat-label">Variación</div><div class="stat-value" style="color:${vari===null?'var(--text2)':vari>0?'#dc2626':'#16a34a'}">${vari===null?'—':(vari>0?'▲ ':'▼ ')+(vari*100).toFixed(1)+'%'}</div></div>
+  <div class="stat-card"><div class="stat-label">Bajas totales ${mes}</div><div class="stat-value">${fmtN(Object.values(tiposBaja).reduce((s,v)=>s+v,0))}</div></div>
+</div>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+  <div style="background:white;border:1px solid var(--border);border-radius:var(--radius);padding:16px">
+    <div style="font-size:13px;font-weight:700;color:var(--afimex-blue);margin-bottom:12px">Bajas por tipo — ${mes} ${anio}</div>
+    <table style="width:100%;border-collapse:collapse;font-size:13px">
+      ${[['SV','Separación Voluntaria','#1A5FA8'],['TC','Término de Contrato','#E8650A'],['AT','Abandono','#dc2626']].map(([k,lbl,c])=>`
+      <tr style="border-bottom:1px solid var(--border)">
+        <td style="padding:8px"><span style="padding:3px 10px;background:${c};color:white;border-radius:99px;font-size:11px;font-weight:700">${k}</span> ${lbl}</td>
+        <td style="padding:8px;text-align:right;font-size:18px;font-weight:700;color:${c}">${tiposBaja[k]}</td>
+      </tr>`).join('')}
+    </table>
+  </div>
+  <div style="background:#fef2f2;border:2px solid #fecaca;border-radius:var(--radius);padding:24px;display:flex;flex-direction:column;justify-content:center;align-items:center;gap:8px">
+    <div style="font-size:13px;color:#dc2626;font-weight:600">Total finiquitos ${mes} ${anio}</div>
+    <div style="font-size:32px;font-weight:700;color:#dc2626">${fmt$(mVal)}</div>
+    <div style="font-size:12px;color:#6b7280">${mAnt?'vs '+fmt$(mAnt)+' en '+anioAnt:'Sin datos '+anioAnt}</div>
+  </div>
+</div>`;
+  }
+
+  return selectorBar + `
+<!-- KPIs -->
+<div class="stats-row" style="margin-bottom:20px">
+  <div class="stat-card"><div class="stat-label">Total finiquitos ${anio}</div><div class="stat-value" style="color:#dc2626">${fmt$(totalAnio)}</div></div>
+  <div class="stat-card"><div class="stat-label">Total finiquitos ${anioAnt}</div><div class="stat-value" style="color:#6b7280">${fmt$(totalAnioAnt)}</div></div>
+  <div class="stat-card"><div class="stat-label">Variación vs año anterior</div><div class="stat-value" style="color:${variacion===null?'var(--text2)':variacion>0?'#dc2626':'#16a34a'}">${variacion===null?'—':(variacion>0?'+':'')+( variacion*100).toFixed(1)+'%'}</div></div>
+  <div class="stat-card"><div class="stat-label">Total bajas ${anio}</div><div class="stat-value">${fmtN(totalBajas)}</div></div>
+</div>
+
+<!-- Tabla comparativa mensual -->
+<div style="background:white;border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;margin-bottom:20px">
+  <div style="background:var(--afimex-blue);padding:10px 16px"><div style="font-size:13px;font-weight:700;color:white;text-transform:uppercase;letter-spacing:.5px">MONTO DE FINIQUITOS POR MES</div></div>
+  <div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12px">
+    <thead><tr>
+      <th style="padding:8px 12px;border:1px solid var(--border);background:#1e3a5f;color:white;text-align:left">MES</th>
+      <th style="padding:8px 12px;border:1px solid var(--border);background:#1e3a5f;color:white;text-align:right">${anio}</th>
+      <th style="padding:8px 12px;border:1px solid var(--border);background:#374151;color:white;text-align:right">${anioAnt}</th>
+      <th style="padding:8px 12px;border:1px solid var(--border);background:#1e3a5f;color:white;text-align:right">Variación</th>
+    </tr></thead>
+    <tbody>
+      ${MESES_LABELS.map((m,i)=>{
+        const val  = porMes[m]||0;
+        const vant = porMesAnt[m]||0;
+        const vari = vant>0?((val-vant)/vant):null;
+        const bg   = i%2===0?'white':'#f9fafb';
+        return `<tr style="background:${bg}">
+          <td style="padding:7px 12px;border:1px solid var(--border);font-weight:700;color:var(--afimex-blue)">${m}</td>
+          <td style="padding:7px 12px;border:1px solid var(--border);text-align:right;font-weight:${val>0?'600':'400'};color:${val>0?'#dc2626':'var(--text2)'}">${val>0?fmt$(val):'$\u00a0-'}</td>
+          <td style="padding:7px 12px;border:1px solid var(--border);text-align:right;color:#6b7280">${vant>0?fmt$(vant):'$\u00a0-'}</td>
+          <td style="padding:7px 12px;border:1px solid var(--border);text-align:right;font-weight:600;color:${vari===null?'var(--text2)':vari>0?'#dc2626':'#16a34a'}">${vari===null?'—':(vari>0?'▲ ':'▼ ')+(vari*100).toFixed(1)+'%'}</td>
+        </tr>`;
+      }).join('')}
+      <tr style="background:#fef2f2;font-weight:700">
+        <td style="padding:8px 12px;border:1px solid var(--border);color:#dc2626">TOTAL</td>
+        <td style="padding:8px 12px;border:1px solid var(--border);text-align:right;color:#dc2626">${fmt$(totalAnio)}</td>
+        <td style="padding:8px 12px;border:1px solid var(--border);text-align:right;color:#6b7280">${fmt$(totalAnioAnt)}</td>
+        <td style="padding:8px 12px;border:1px solid var(--border);text-align:right;color:${variacion===null?'var(--text2)':variacion>0?'#dc2626':'#16a34a'}">${variacion===null?'—':(variacion>0?'▲ ':'▼ ')+(variacion*100).toFixed(1)+'%'}</td>
+      </tr>
+    </tbody>
+  </table></div>
+</div>
+
+<!-- Desglose por tipo de baja -->
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px">
+  <div style="background:white;border:1px solid var(--border);border-radius:var(--radius);overflow:hidden">
+    <div style="background:var(--afimex-orange);padding:10px 16px"><div style="font-size:13px;font-weight:700;color:white;text-transform:uppercase;letter-spacing:.5px">BAJAS POR TIPO — ${anio}</div></div>
+    <div style="padding:16px">
+      <table style="width:100%;border-collapse:collapse;font-size:13px">
+        ${[['Separación Voluntaria','SV','#1A5FA8'],['Término de Contrato','TC','#E8650A'],['Abandono','AT','#dc2626']].map(([lbl,key,color])=>`
+        <tr style="border-bottom:1px solid var(--border)">
+          <td style="padding:10px 8px">
+            <span style="display:inline-block;padding:3px 10px;background:${color};color:white;border-radius:99px;font-size:11px;font-weight:700">${key}</span>
+            <span style="margin-left:8px;font-weight:500">${lbl}</span>
+          </td>
+          <td style="padding:10px 8px;text-align:right;font-size:18px;font-weight:700;color:${color}">${tiposBaja[key]}</td>
+          <td style="padding:10px 8px;text-align:right;color:#6b7280;font-size:12px">vs ${tiposBajaAnt[key]} en ${anioAnt}</td>
+        </tr>`).join('')}
+        <tr style="background:#f8fafc">
+          <td style="padding:10px 8px;font-weight:700">TOTAL BAJAS</td>
+          <td style="padding:10px 8px;text-align:right;font-size:18px;font-weight:700;color:var(--afimex-blue)">${totalBajas}</td>
+          <td style="padding:10px 8px;text-align:right;color:#6b7280;font-size:12px">vs ${Object.values(tiposBajaAnt).reduce((s,v)=>s+v,0)} en ${anioAnt}</td>
+        </tr>
+      </table>
+    </div>
+  </div>
+  <div style="background:white;border:1px solid var(--border);border-radius:var(--radius);overflow:hidden">
+    <div style="background:#1e3a5f;padding:10px 16px"><div style="font-size:13px;font-weight:700;color:white;text-transform:uppercase;letter-spacing:.5px">PROMEDIO MENSUAL</div></div>
+    <div style="padding:16px;display:flex;flex-direction:column;gap:12px">
+      ${(()=>{
+        const mesesConFin = MESES_LABELS.filter(m=>porMes[m]>0).length || 1;
+        const promMonto = totalAnio/mesesConFin;
+        const promBajas = totalBajas/mesesConFin;
+        return `
+        <div style="background:#fef2f2;border-radius:var(--radius-sm);padding:12px 16px;display:flex;justify-content:space-between;align-items:center">
+          <div style="font-size:12px;color:#dc2626;font-weight:600">Monto promedio / mes</div>
+          <div style="font-size:20px;font-weight:700;color:#dc2626">${fmt$(promMonto)}</div>
+        </div>
+        <div style="background:#eff6ff;border-radius:var(--radius-sm);padding:12px 16px;display:flex;justify-content:space-between;align-items:center">
+          <div style="font-size:12px;color:var(--afimex-blue);font-weight:600">Bajas promedio / mes</div>
+          <div style="font-size:20px;font-weight:700;color:var(--afimex-blue)">${promBajas.toFixed(1)}</div>
+        </div>
+        <div style="background:#f0fdf4;border-radius:var(--radius-sm);padding:12px 16px;display:flex;justify-content:space-between;align-items:center">
+          <div style="font-size:12px;color:#16a34a;font-weight:600">Costo promedio por baja</div>
+          <div style="font-size:20px;font-weight:700;color:#16a34a">${totalBajas>0?fmt$(totalAnio/totalBajas):'—'}</div>
+        </div>`;
+      })()}
+    </div>
+  </div>
+</div>`;
+}
+
+// ── Sub-pestaña: Costo de Rotación ────────────────────────────────────────
+function indicadoresCRHTML(){
+  const anio = window._indAnio || '2026';
+  const fmt$ = n => '$'+Number(n||0).toLocaleString('es-MX',{minimumFractionDigits:2,maximumFractionDigits:2});
+  const fmtN = n => Number(n||0).toLocaleString('es-MX');
+  const cc = crConstantes;
+
+  // Estado de captura mensual por mes/año
+  if(!window._crDatos) window._crDatos = {};
+  if(!window._crDatos[anio]) window._crDatos[anio] = {};
+  const mes = window._crMes || MESES_LABELS[new Date().getMonth()];
+  if(!window._crDatos[anio][mes]) window._crDatos[anio][mes] = {
+    bajasSV:0, bajasAT:0, bajasTC:0,
+    altasOp:0, altasOperativas:0, altasAdm:0
+  };
+  const d = window._crDatos[anio][mes];
+
+  // Cálculos
+  const costoBajas    = d.bajasSV*cc.costoSV + d.bajasAT*cc.costoAT + d.bajasTC*cc.costoTC;
+  const costoAtracOp  = d.altasOp * cc.costoAtraccionOp;
+  const costoAtracAdm = d.altasAdm * cc.costoAtraccionAdm;
+  const costoContrat  = (d.altasOp+d.altasOperativas+d.altasAdm) * cc.costoContratacion;
+  const costoAlta     = (d.altasOp+d.altasOperativas+d.altasAdm) * cc.costoAlta;
+  const costoCap      = (d.altasOp+d.altasOperativas+d.altasAdm) * cc.costoCapacitacion;
+
+  // Curva de aprendizaje — por tipo
+  const curvaPct = cc.curvaMes1Pct + cc.curvaMes2Pct + cc.curvaMes3Pct;
+  const curvaOp  = d.altasOp * cc.sueldoChofer * curvaPct;
+  const curvaOv  = d.altasOperativas * cc.sueldoOperativo * curvaPct;
+  const curvaAdm = d.altasAdm * cc.sueldoAdministrativo * curvaPct;
+  const costoCurva = curvaOp + curvaOv + curvaAdm;
+
+  // Finiquitos del mes desde el sistema
+  const finiqMes = (finiquitosDB||[]).filter(f=>{
+    const fecha = f.fechaBaja||f.fecha||'';
+    if(!fecha) return false;
+    const dt = new Date(fecha.includes('T')?fecha:fecha+'T12:00:00');
+    return String(dt.getFullYear())===anio && MESES_LABELS[dt.getMonth()]===mes;
+  }).reduce((s,f)=>s+parseFloat(f.totalFiniquito||f.neto||f.total||f.monto||0),0);
+
+  const costoTotal = costoBajas + costoAtracOp + costoAtracAdm + costoContrat + costoAlta + costoCap + costoCurva + finiqMes;
+
+  const numInp = (key, val, label) => `
+    <div style="display:flex;flex-direction:column;gap:4px">
+      <label style="font-size:11px;font-weight:600;color:var(--text2);text-transform:uppercase">${label}</label>
+      <input type="number" min="0" value="${val}" onchange="window._crDatos['${anio}']['${mes}']['${key}']=parseInt(this.value)||0;render()"
+        style="width:100%;padding:8px 10px;border:2px solid var(--afimex-blue);border-radius:var(--radius-sm);font-size:18px;font-weight:700;text-align:center;color:var(--afimex-blue)">
+    </div>`;
+
+  const ccInp = (key, val, label, prefix='$') => `
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 12px;border-bottom:1px solid var(--border)">
+      <span style="font-size:13px;color:var(--text)">${label}</span>
+      <div style="display:flex;align-items:center;gap:6px">
+        ${prefix==='$'?'<span style="font-size:12px;color:var(--text2)">$</span>':''}
+        <input type="number" step="0.01" value="${val}" onchange="crConstantes['${key}']=parseFloat(this.value)||0;localStorage.setItem('afimex-cr-constantes',JSON.stringify(crConstantes));render()"
+          style="width:120px;padding:5px 8px;border:1.5px solid var(--border2);border-radius:4px;font-size:13px;text-align:right;font-weight:600">
+        ${prefix==='%'?'<span style="font-size:12px;color:var(--text2)">%</span>':''}
+      </div>
+    </div>`;
+
+  return `
+<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:20px">
+  <div>
+    <div style="font-size:18px;font-weight:700;color:var(--afimex-blue)">Costo de Rotación de Personal</div>
+    <div style="font-size:12px;color:var(--text2);margin-top:2px">Cálculo basado en procesos y tiempos internos</div>
+  </div>
+  <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+    <div style="display:flex;align-items:center;gap:6px">
+      <label style="font-size:12px;color:var(--text2);font-weight:500">Año:</label>
+      <select onchange="window._indAnio=this.value;render()" style="border:1px solid var(--border2);border-radius:var(--radius-sm);padding:6px 10px;font-size:13px">
+        ${['2024','2025','2026','2027'].map(a=>`<option value="${a}" ${a===anio?'selected':''}>${a}</option>`).join('')}
+      </select>
+    </div>
+    <div style="display:flex;align-items:center;gap:6px">
+      <label style="font-size:12px;color:var(--text2);font-weight:500">Mes:</label>
+      <select onchange="window._crMes=this.value;window._indMes=this.value;render()" style="border:1px solid var(--border2);border-radius:var(--radius-sm);padding:6px 10px;font-size:13px">
+        ${MESES_LABELS.map(m=>`<option value="${m}" ${m===mes?'selected':''}>${m}</option>`).join('')}
+      </select>
+    </div>
+  </div>
+</div>
+
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px">
+
+  <!-- CAPTURA DE MOVIMIENTOS -->
+  <div style="background:white;border:1px solid var(--border);border-radius:var(--radius);overflow:hidden">
+    <div style="background:var(--afimex-blue);padding:10px 16px"><div style="font-size:13px;font-weight:700;color:white;text-transform:uppercase;letter-spacing:.5px">Movimientos del mes — ${mes} ${anio}</div></div>
+    <div style="padding:16px">
+      <div style="font-size:11px;font-weight:700;color:var(--afimex-orange);text-transform:uppercase;margin-bottom:10px;letter-spacing:.5px">Bajas</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:16px">
+        ${numInp('bajasSV',d.bajasSV,'Bajas SV')}
+        ${numInp('bajasAT',d.bajasAT,'Bajas AT')}
+        ${numInp('bajasTC',d.bajasTC,'Bajas TC')}
+      </div>
+      <div style="font-size:11px;font-weight:700;color:var(--afimex-blue);text-transform:uppercase;margin-bottom:10px;letter-spacing:.5px">Altas</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px">
+        ${numInp('altasOp',d.altasOp,'Operadores')}
+        ${numInp('altasOperativas',d.altasOperativas,'Operativas')}
+        ${numInp('altasAdm',d.altasAdm,'Administrativas')}
+      </div>
+    </div>
+  </div>
+
+  <!-- RESULTADO DEL MES -->
+  <div style="background:white;border:1px solid var(--border);border-radius:var(--radius);overflow:hidden">
+    <div style="background:var(--afimex-orange);padding:10px 16px"><div style="font-size:13px;font-weight:700;color:white;text-transform:uppercase;letter-spacing:.5px">Desglose de costos — ${mes} ${anio}</div></div>
+    <div style="padding:0">
+      ${[
+        ['Procesos de baja (SV+AT+TC)', costoBajas, '#dc2626'],
+        ['Atracción talento operativo', costoAtracOp, '#1A5FA8'],
+        ['Atracción talento administrativo', costoAtracAdm, '#1A5FA8'],
+        ['Proceso de contratación', costoContrat, '#1A5FA8'],
+        ['Proceso de alta', costoAlta, '#1A5FA8'],
+        ['Capacitación', costoCap, '#1A5FA8'],
+        ['Curva de aprendizaje', costoCurva, '#7c3aed'],
+        ['Finiquitos (del sistema)', finiqMes, '#dc2626'],
+      ].map(([lbl,val,color])=>`
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:9px 16px;border-bottom:1px solid var(--border)">
+        <span style="font-size:12px;color:var(--text)">${lbl}</span>
+        <span style="font-size:13px;font-weight:600;color:${val>0?color:'var(--text2)'}">${val>0?fmt$(val):'$\u00a0-'}</span>
+      </div>`).join('')}
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:14px 16px;background:#fef2f2">
+        <span style="font-size:14px;font-weight:700;color:#dc2626">COSTO TOTAL DE ROTACIÓN</span>
+        <span style="font-size:20px;font-weight:700;color:#dc2626">${fmt$(costoTotal)}</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- CONSTANTES CONFIGURABLES -->
+<div style="background:white;border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;margin-bottom:16px">
+  <div style="background:#1e3a5f;padding:10px 16px;display:flex;align-items:center;justify-content:space-between">
+    <div style="font-size:13px;font-weight:700;color:white;text-transform:uppercase;letter-spacing:.5px">⚙ Constantes — Costos por proceso</div>
+    <button onclick="crConstantes=Object.assign({},CR_CONSTANTES_DEFAULT);localStorage.setItem('afimex-cr-constantes',JSON.stringify(crConstantes));render()"
+      style="background:rgba(255,255,255,.15);border:1px solid rgba(255,255,255,.3);color:white;border-radius:4px;padding:4px 12px;font-size:11px;cursor:pointer">↩ Restaurar defaults</button>
+  </div>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:0">
+    <div>
+      <div style="padding:8px 12px;background:#f8fafc;font-size:11px;font-weight:700;color:var(--afimex-blue);text-transform:uppercase;border-bottom:1px solid var(--border)">Costos por proceso ($)</div>
+      ${ccInp('costoSV',cc.costoSV,'Proceso SV (por baja)')}
+      ${ccInp('costoTC',cc.costoTC,'Proceso TC (por baja)')}
+      ${ccInp('costoAT',cc.costoAT,'Proceso AT (por baja)')}
+      ${ccInp('costoAtraccionOp',cc.costoAtraccionOp,'Atracción operativa (por alta)')}
+      ${ccInp('costoAtraccionAdm',cc.costoAtraccionAdm,'Atracción administrativa (por alta)')}
+      ${ccInp('costoContratacion',cc.costoContratacion,'Contratación (por alta)')}
+      ${ccInp('costoAlta',cc.costoAlta,'Proceso de alta (por alta)')}
+      ${ccInp('costoCapacitacion',cc.costoCapacitacion,'Capacitación (por alta)')}
+    </div>
+    <div style="border-left:1px solid var(--border)">
+      <div style="padding:8px 12px;background:#f8fafc;font-size:11px;font-weight:700;color:var(--afimex-orange);text-transform:uppercase;border-bottom:1px solid var(--border)">Sueldos promedio (mensual $)</div>
+      ${ccInp('sueldoChofer',cc.sueldoChofer,'Sueldo chofer / operador')}
+      ${ccInp('sueldoOperativo',cc.sueldoOperativo,'Sueldo operativo')}
+      ${ccInp('sueldoAdministrativo',cc.sueldoAdministrativo,'Sueldo administrativo')}
+      <div style="padding:8px 12px;background:#f8fafc;font-size:11px;font-weight:700;color:#7c3aed;text-transform:uppercase;border-bottom:1px solid var(--border);border-top:1px solid var(--border);margin-top:8px">Curva de aprendizaje (% del sueldo)</div>
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 12px;border-bottom:1px solid var(--border)">
+        <span style="font-size:13px;color:var(--text)">Mes 1 — pérdida por desempeño al 70%</span>
+        <div style="display:flex;align-items:center;gap:6px">
+          <input type="number" step="0.1" value="${+(cc.curvaMes1Pct*100).toFixed(1)}" onchange="crConstantes.curvaMes1Pct=(parseFloat(this.value)||0)/100;localStorage.setItem('afimex-cr-constantes',JSON.stringify(crConstantes));render()"
+            style="width:80px;padding:5px 8px;border:1.5px solid var(--border2);border-radius:4px;font-size:13px;text-align:right;font-weight:600">
+          <span style="font-size:12px;color:var(--text2)">%</span>
+        </div>
+      </div>
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 12px;border-bottom:1px solid var(--border)">
+        <span style="font-size:13px;color:var(--text)">Mes 2 — pérdida por desempeño al 80%</span>
+        <div style="display:flex;align-items:center;gap:6px">
+          <input type="number" step="0.1" value="${+(cc.curvaMes2Pct*100).toFixed(1)}" onchange="crConstantes.curvaMes2Pct=(parseFloat(this.value)||0)/100;localStorage.setItem('afimex-cr-constantes',JSON.stringify(crConstantes));render()"
+            style="width:80px;padding:5px 8px;border:1.5px solid var(--border2);border-radius:4px;font-size:13px;text-align:right;font-weight:600">
+          <span style="font-size:12px;color:var(--text2)">%</span>
+        </div>
+      </div>
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 12px;border-bottom:1px solid var(--border)">
+        <span style="font-size:13px;color:var(--text)">Mes 3 — pérdida por desempeño al 95%</span>
+        <div style="display:flex;align-items:center;gap:6px">
+          <input type="number" step="0.1" value="${+(cc.curvaMes3Pct*100).toFixed(1)}" onchange="crConstantes.curvaMes3Pct=(parseFloat(this.value)||0)/100;localStorage.setItem('afimex-cr-constantes',JSON.stringify(crConstantes));render()"
+            style="width:80px;padding:5px 8px;border:1.5px solid var(--border2);border-radius:4px;font-size:13px;text-align:right;font-weight:600">
+          <span style="font-size:12px;color:var(--text2)">%</span>
+        </div>
+      </div>
+      <div style="padding:10px 12px;background:#f5f3ff;border-top:1px solid var(--border)">
+        <div style="font-size:11px;color:#7c3aed;font-weight:600">Total pérdida por curva</div>
+        <div style="font-size:16px;font-weight:700;color:#7c3aed">${((cc.curvaMes1Pct+cc.curvaMes2Pct+cc.curvaMes3Pct)*100).toFixed(0)}% del sueldo mensual</div>
+        <div style="font-size:10px;color:var(--text2);margin-top:2px">= ${((cc.curvaMes1Pct+cc.curvaMes2Pct+cc.curvaMes3Pct)*100/100*3).toFixed(2)} sueldos mensuales por persona</div>
+      </div>
+    </div>
+  </div>
+</div>`;
 }
 
 </script>
