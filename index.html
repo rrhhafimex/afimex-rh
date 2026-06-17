@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Afimex People</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
 :root {
@@ -166,7 +167,7 @@ input.field-ok { border-color: #16a34a; background: #f0fdf4; }
     <div style="display:flex;align-items:center;gap:12px">
       <div>
         <div class="topbar-title">AFIMEX PEOPLE</div>
-        <div class="topbar-sub">V 12.0.5 | Recursos Humanos</div>
+        <div class="topbar-sub">V 12.0.6 | Recursos Humanos</div>
       </div>
     </div>
     <div style="position:absolute;left:50%;transform:translateX(-50%)">
@@ -408,7 +409,7 @@ window.gsCallback = function(name, data){
 
 // Enviar via JSONP GET — único método que funciona cross-origin
 function jsonpSend(sheet, data){
-  return new Promise((resolve)=>{
+  return new Promise((resolve, reject)=>{
     const json = JSON.stringify(data);
     const SIZE = 2000;
     const chunks = [];
@@ -417,18 +418,17 @@ function jsonpSend(sheet, data){
     const uid = Date.now()+'_'+Math.random().toString(36).slice(2,6);
     const cbBase = 'gsC_'+sheet.replace(/[^a-zA-Z0-9]/g,'_')+'_'+uid;
     let idx = 0;
+    let retries = 0;
+    const MAX_RETRIES = 3;
 
-    // Wrapper global que el Apps Script puede llamar
-    const globalCbName = cbBase;
-    window[globalCbName] = function(chunkIdx){
-      // Este wrapper recibe la respuesta de cualquier chunk
+    window[cbBase] = function(chunkIdx){
       var resolve_fn = window._gsCallbacks[cbBase+'_'+chunkIdx];
       if(resolve_fn){ resolve_fn(); delete window._gsCallbacks[cbBase+'_'+chunkIdx]; }
     };
 
     function sendNext(){
       if(idx >= chunks.length){ 
-        delete window[globalCbName];
+        delete window[cbBase];
         resolve({ok:true}); 
         return; 
       }
@@ -437,13 +437,20 @@ function jsonpSend(sheet, data){
 
       const t = setTimeout(function(){
         delete window._gsCallbacks[cbName];
-        idx++;
-        sendNext();
+        retries++;
+        if(retries <= MAX_RETRIES){
+          // Reintentar el mismo chunk
+          sendNext();
+        } else {
+          // Falló demasiadas veces — rechazar con error claro
+          delete window[cbBase];
+          reject(new Error('Timeout guardando hoja "'+sheet+'" chunk '+chunkIdx+'/'+chunks.length+'. Verifica tu conexión y el Apps Script.'));
+        }
       }, 12000);
 
-      // Registrar en el registro global ANTES de crear el script
       window._gsCallbacks[cbName] = function(){
         clearTimeout(t);
+        retries = 0; // Reset retries al éxito
         idx++;
         sendNext();
       };
@@ -452,11 +459,15 @@ function jsonpSend(sheet, data){
       s.onerror = function(){
         clearTimeout(t);
         delete window._gsCallbacks[cbName];
-        idx++;
-        sendNext();
+        retries++;
+        if(retries <= MAX_RETRIES){
+          sendNext();
+        } else {
+          delete window[cbBase];
+          reject(new Error('Error de red guardando hoja "'+sheet+'". Verifica el Apps Script.'));
+        }
       };
 
-      // El Apps Script llamará: gsCallback("cbName")
       s.src = APPS_SCRIPT_URL
         + '?action=saveChunk'
         + '&sheet=' + encodeURIComponent(sheet)
@@ -9336,7 +9347,7 @@ function penAgregarComentario(id){
   // ── Auto-sync en background cada 10 minutos ──────────────────
   // Descarga solo datos operativos silenciosamente y aplica cambios si hay novedades
   if(tieneGSheets()){
-    const AUTOSYNC_HOJAS = ['Expedientes','Seguimiento','Incapacidades','Pendientes','Finiquitos','SV_Folios','Folios_Manual','Folios','Plantilla','Activos','Cat_Puestos','Cat_Nominas'];
+    const AUTOSYNC_HOJAS = ['Expedientes','Seguimiento','Incapacidades','Pendientes','Finiquitos','SV_Folios','Folios_Manual','Folios','Plantilla','Activos','Cat_Puestos','Cat_Nominas','Cat_Actividades'];
     async function autoSyncBackground(){
       try{
         let huboCambios = false;
@@ -9386,6 +9397,12 @@ function penAgregarComentario(id){
             DATA_NOMINAS.splice(0, DATA_NOMINAS.length, ...datos);
             localStorage.setItem('afimex-config-nominas', JSON.stringify(DATA_NOMINAS));
             if(JSON.stringify(DATA_NOMINAS)!==antesN) huboCambios=true;
+          } else if(hoja==='Cat_Actividades' && datos && typeof datos==='object' && Object.keys(datos).length>0){
+            const antesA = JSON.stringify(ACTIVIDADES);
+            Object.keys(ACTIVIDADES).forEach(k=>delete ACTIVIDADES[k]);
+            Object.assign(ACTIVIDADES, datos);
+            localStorage.setItem('afimex-config-actividades', JSON.stringify(ACTIVIDADES));
+            if(JSON.stringify(ACTIVIDADES)!==antesA) huboCambios=true;
           }
         }
         if(huboCambios){
@@ -10026,11 +10043,15 @@ const MESES_LABELS = ['ENE','FEB','MAR','ABR','MAY','JUN','JUL','AGO','SEP','OCT
 
 function indicadoresHTML(){
   const subTab = window._indTab || 'nominas';
-  const stBtn = (id,lbl) => `<button onclick="window._indTab='${id}';render()" style="padding:10px 20px;border:none;background:${subTab===id?'var(--afimex-blue)':'transparent'};color:${subTab===id?'white':'var(--text2)'};font-weight:${subTab===id?'700':'400'};font-size:13px;cursor:pointer;border-bottom:${subTab===id?'2px solid var(--afimex-blue)':'2px solid transparent'};transition:all .15s">${lbl}</button>`;
-  const tabBar = `<div style="display:flex;gap:0;border-bottom:2px solid var(--border);margin-bottom:20px">${stBtn('nominas','💰 Nóminas')}${stBtn('finiquitos_ind','📋 Finiquitos')}${stBtn('costo_rotacion','🔄 Costo de Rotación')}${stBtn('reclutamiento','🎯 Reclutamiento')}${stBtn('capacitacion','📚 Capacitación')}</div>`;
+  const stBtn = (id,lbl) => `<button onclick="window._indTab='${id}';render()" style="padding:10px 20px;border:none;background:${subTab===id?'var(--afimex-blue)':'transparent'};color:${subTab===id?'white':'var(--text2)'};font-weight:${subTab===id?'700':'400'};font-size:13px;cursor:pointer;border-bottom:${subTab===id?'2px solid var(--afimex-blue)':'2px solid transparent'};transition:all .15s;white-space:nowrap">${lbl}</button>`;
+  const tabBar = `<div style="display:flex;gap:0;border-bottom:2px solid var(--border);margin-bottom:20px;overflow-x:auto">${stBtn('nominas','💰 Nóminas')}${stBtn('finiquitos_ind','📋 Finiquitos')}${stBtn('costo_rotacion','🔄 Costo de Rotación')}${stBtn('permanencia','👥 Permanencia')}${stBtn('promociones','📈 Promociones')}${stBtn('cultura','💜 Plan de Cultura')}${stBtn('calificacion','🏆 Calificación')}${stBtn('reclutamiento','🎯 Reclutamiento')}${stBtn('capacitacion','📚 Capacitación')}</div>`;
   if(subTab==='nominas')        return tabBar + indicadoresNominasHTML();
   if(subTab==='finiquitos_ind') return tabBar + indicadoresFiniquitosHTML();
   if(subTab==='costo_rotacion') return tabBar + indicadoresCRHTML();
+  if(subTab==='permanencia')    return tabBar + indicadoresPermanenciaHTML();
+  if(subTab==='promociones')    return tabBar + indicadoresPromocionesHTML();
+  if(subTab==='cultura')        return tabBar + indicadoresCulturaHTML();
+  if(subTab==='calificacion')   return tabBar + indicadoresCalificacionHTML();
   const lbl = subTab==='reclutamiento'?'🎯 Reclutamiento':'📚 Capacitación';
   return tabBar+`<div class="empty-state" style="padding:60px 0"><div style="font-size:40px;margin-bottom:12px">${subTab==='reclutamiento'?'🎯':'📚'}</div><div style="font-size:16px;font-weight:600;color:var(--text2)">${lbl}</div><div style="font-size:13px;color:var(--text2);margin-top:6px">Próximamente</div></div>`;
 }
@@ -10905,6 +10926,496 @@ function indicadoresCRHTML(){
       </div>
     </div>
   </div>
+</div>`;
+}
+
+// ── Sub-pestaña: Permanencia ──────────────────────────────────────────────
+// Calcula permanencia 0-30 / 31-60 / 61-90 días usando fechaIngreso+fechaBaja
+// de finiquitosDB (numerador) contra altas registradas en db (denominador).
+function indicadoresPermanenciaHTML(){
+  const anio = window._indAnio || '2026';
+  const mes = window._indMes || '';
+  const fmtN = n => Number(n||0).toLocaleString('es-MX');
+
+  const selectorBar = `
+<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:20px">
+  <div>
+    <div style="font-size:18px;font-weight:700;color:var(--afimex-blue)">Permanencia de Personal</div>
+    <div style="font-size:12px;color:var(--text2);margin-top:2px">Calculado desde fecha de ingreso y fecha de baja del sistema${mes?' — '+mes:''}</div>
+  </div>
+  <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+    <div style="display:flex;align-items:center;gap:6px">
+      <label style="font-size:12px;color:var(--text2);font-weight:500">Año:</label>
+      <select onchange="window._indAnio=this.value;render()" style="border:1px solid var(--border2);border-radius:var(--radius-sm);padding:6px 10px;font-size:13px">
+        ${['2024','2025','2026','2027'].map(a=>`<option value="${a}" ${a===anio?'selected':''}>${a}</option>`).join('')}
+      </select>
+    </div>
+    <div style="display:flex;align-items:center;gap:6px">
+      <label style="font-size:12px;color:var(--text2);font-weight:500">Mes:</label>
+      <select onchange="window._indMes=this.value;render()" style="border:1px solid var(--border2);border-radius:var(--radius-sm);padding:6px 10px;font-size:13px">
+        <option value="" ${mes===''?'selected':''}>Todos</option>
+        ${MESES_LABELS.map(m=>`<option value="${m}" ${m===mes?'selected':''}>${m}</option>`).join('')}
+      </select>
+    </div>
+  </div>
+</div>`;
+
+  // Altas por mes/año desde 'db' (expedientes capturados)
+  const altasPorMes = {};
+  MESES_LABELS.forEach(m=>altasPorMes[m]=0);
+  (db||[]).forEach(r=>{
+    if(!r.fechaIngreso) return;
+    const d = new Date(r.fechaIngreso+'T12:00:00');
+    if(String(d.getFullYear())!==anio) return;
+    const m = MESES_LABELS[d.getMonth()];
+    if(m) altasPorMes[m]++;
+  });
+  const totalAltasAnio = Object.values(altasPorMes).reduce((s,v)=>s+v,0);
+
+  // Bajas con antigüedad calculada, desde finiquitosDB (todos los tipos)
+  const bajasConAntiguedad = (finiquitosDB||[]).map(f=>{
+    if(!f.fechaIngreso || !f.fechaBaja) return null;
+    const ing = new Date(f.fechaIngreso+'T12:00:00');
+    const baja = new Date(f.fechaBaja+'T12:00:00');
+    const dias = Math.floor((baja-ing)/86400000);
+    if(dias<0) return null;
+    return {
+      nombre: f.nombre||'',
+      fechaIngreso: f.fechaIngreso,
+      fechaBaja: f.fechaBaja,
+      dias,
+      anioBaja: String(baja.getFullYear()),
+      mesBaja: MESES_LABELS[baja.getMonth()],
+      tipoBaja: f.tipoBaja||'',
+    };
+  }).filter(Boolean).filter(b=>b.anioBaja===anio);
+
+  const bajasFiltradas = mes ? bajasConAntiguedad.filter(b=>b.mesBaja===mes) : bajasConAntiguedad;
+
+  const banda030  = bajasFiltradas.filter(b=>b.dias<=30).length;
+  const banda3160 = bajasFiltradas.filter(b=>b.dias>30&&b.dias<=60).length;
+  const banda6190 = bajasFiltradas.filter(b=>b.dias>60&&b.dias<=90).length;
+  const bandaMas90= bajasFiltradas.filter(b=>b.dias>90).length;
+
+  const baseAltas = mes ? (altasPorMes[mes]||0) : totalAltasAnio;
+  const pct030 = baseAltas>0 ? (banda030/baseAltas*100) : null;
+  const pcColor = pct030===null?'var(--text2)':pct030<=10?'#16a34a':pct030<=15?'#f59e0b':'#dc2626';
+
+  // Serie mensual de % permanencia 0-30 días para la gráfica
+  const serieMensual = MESES_LABELS.map(m=>{
+    const altasM = altasPorMes[m]||0;
+    const bajasM030 = bajasConAntiguedad.filter(b=>b.mesBaja===m && b.dias<=30).length;
+    return altasM>0 ? +(bajasM030/altasM*100).toFixed(1) : null;
+  });
+
+  const chartId = 'ch-permanencia-'+Date.now();
+
+  setTimeout(()=>{
+    if(window._chPermanencia) window._chPermanencia.destroy();
+    const ctx = document.getElementById(chartId);
+    if(!ctx) return;
+    window._chPermanencia = new Chart(ctx, {
+      type:'line',
+      data:{ labels:MESES_LABELS, datasets:[
+        {label:'% baja en 0-30 días', data:serieMensual, borderColor:'#dc2626', backgroundColor:'rgba(220,38,38,0.08)', borderWidth:2.5, tension:.3, pointRadius:4, pointBackgroundColor:'#dc2626', spanGaps:true},
+        {label:'Meta ≤15%', data:MESES_LABELS.map(()=>15), borderColor:'#16a34a', borderWidth:1.5, borderDash:[6,4], pointRadius:0},
+      ]},
+      options:{ responsive:true, maintainAspectRatio:false,
+        plugins:{ legend:{ display:true, position:'bottom', labels:{font:{size:11}} } },
+        scales:{ x:{grid:{display:false}}, y:{ ticks:{ callback:v=>v+'%' }, min:0 } }
+      }
+    });
+  }, 30);
+
+  return selectorBar + `
+<div class="stats-row" style="margin-bottom:20px">
+  <div class="stat-card"><div class="stat-label">Altas ${mes||anio}</div><div class="stat-value" style="color:var(--afimex-blue)">${fmtN(baseAltas)}</div></div>
+  <div class="stat-card"><div class="stat-label">Bajas con antigüedad ≤30 días</div><div class="stat-value" style="color:#dc2626">${fmtN(banda030)}</div></div>
+  <div class="stat-card"><div class="stat-label">% permanencia 0-30 días</div><div class="stat-value" style="color:${pcColor}">${pct030===null?'—':pct030.toFixed(1)+'%'}</div></div>
+  <div class="stat-card"><div class="stat-label">Meta propuesta</div><div class="stat-value" style="color:#16a34a;font-size:16px">≤15% (ajustada por volumen)</div></div>
+</div>
+
+<div style="background:white;border:1px solid var(--border);border-radius:var(--radius);padding:16px;margin-bottom:20px">
+  <div style="font-size:13px;font-weight:700;color:var(--afimex-blue);margin-bottom:10px">Evolución mensual — % de bajas en los primeros 30 días</div>
+  <div style="position:relative;width:100%;height:220px"><canvas id="${chartId}"></canvas></div>
+</div>
+
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px">
+  <div style="background:white;border:1px solid var(--border);border-radius:var(--radius);overflow:hidden">
+    <div style="background:var(--afimex-blue);padding:10px 16px"><div style="font-size:13px;font-weight:700;color:white;text-transform:uppercase;letter-spacing:.5px">Antigüedad al momento de la baja — ${mes||anio}</div></div>
+    <div style="padding:16px">
+      ${[
+        ['0-30 días', banda030, '#dc2626'],
+        ['31-60 días', banda3160, '#f59e0b'],
+        ['61-90 días', banda6190, '#f59e0b'],
+        ['Más de 90 días', bandaMas90, '#16a34a'],
+      ].map(([lbl,n,color])=>{
+        const tot = bajasFiltradas.length||1;
+        const pct = Math.round(n/tot*100);
+        return `<div style="margin-bottom:10px">
+          <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px"><span style="color:var(--text2)">${lbl}</span><span style="font-weight:600;color:${color}">${n} (${pct}%)</span></div>
+          <div style="height:8px;background:var(--bg2);border-radius:4px;overflow:hidden"><div style="height:100%;width:${pct}%;background:${color};border-radius:4px"></div></div>
+        </div>`;
+      }).join('')}
+    </div>
+  </div>
+  <div style="background:white;border:1px solid var(--border);border-radius:var(--radius);overflow:hidden">
+    <div style="background:var(--afimex-orange);padding:10px 16px"><div style="font-size:13px;font-weight:700;color:white;text-transform:uppercase;letter-spacing:.5px">Regla propuesta — meta escalada por volumen</div></div>
+    <div style="padding:12px 16px">
+      ${[
+        ['Ingresos < 30 / mes', '≤10%', 'Alta exigencia'],
+        ['Ingresos 30-60 / mes', '≤15%', 'Exigencia media'],
+        ['Ingresos > 60 / mes (pico)', '≤18%', 'Ajustada al volumen'],
+      ].map(([rango,meta,exig],i)=>`
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:9px 0;border-bottom:${i<2?'1px solid var(--border)':'none'}">
+        <div><div style="font-size:12px;font-weight:600;color:var(--text)">${rango}</div><div style="font-size:11px;color:var(--text2)">${exig}</div></div>
+        <span style="padding:3px 10px;background:var(--afimex-blue-light);color:var(--afimex-blue);border-radius:99px;font-size:11px;font-weight:700">${meta}</span>
+      </div>`).join('')}
+      <div style="font-size:11px;color:var(--text2);margin-top:10px;line-height:1.5">Promedio histórico: 25 bajas/mes. En meses pico (3× volumen) la probabilidad estadística de bajas tempranas aumenta aunque el proceso de selección y Onboarding sea el mismo.</div>
+    </div>
+  </div>
+</div>
+
+<div style="background:white;border:1px solid var(--border);border-radius:var(--radius);overflow:hidden">
+  <div style="background:#1e3a5f;padding:10px 16px"><div style="font-size:13px;font-weight:700;color:white;text-transform:uppercase;letter-spacing:.5px">Detalle de bajas con antigüedad — ${mes||anio}</div></div>
+  <div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12px">
+    <thead><tr>
+      <th style="padding:8px 12px;border:1px solid var(--border);background:#f8fafc;text-align:left">Nombre</th>
+      <th style="padding:8px 12px;border:1px solid var(--border);background:#f8fafc;text-align:left">Ingreso</th>
+      <th style="padding:8px 12px;border:1px solid var(--border);background:#f8fafc;text-align:left">Baja</th>
+      <th style="padding:8px 12px;border:1px solid var(--border);background:#f8fafc;text-align:right">Antigüedad</th>
+      <th style="padding:8px 12px;border:1px solid var(--border);background:#f8fafc;text-align:center">Tipo</th>
+    </tr></thead>
+    <tbody>
+    ${bajasFiltradas.length===0?`<tr><td colspan="5" style="padding:20px;text-align:center;color:var(--text2)">Sin bajas registradas en este periodo</td></tr>`:
+      bajasFiltradas.sort((a,b)=>a.dias-b.dias).map((b,i)=>{
+        const bg = i%2===0?'white':'#f9fafb';
+        const color = b.dias<=30?'#dc2626':b.dias<=90?'#f59e0b':'#16a34a';
+        return `<tr style="background:${bg}">
+          <td style="padding:7px 12px;border:1px solid var(--border)">${b.nombre||'—'}</td>
+          <td style="padding:7px 12px;border:1px solid var(--border)">${fmtDate(b.fechaIngreso)}</td>
+          <td style="padding:7px 12px;border:1px solid var(--border)">${fmtDate(b.fechaBaja)}</td>
+          <td style="padding:7px 12px;border:1px solid var(--border);text-align:right;font-weight:700;color:${color}">${b.dias} días</td>
+          <td style="padding:7px 12px;border:1px solid var(--border);text-align:center"><span style="padding:2px 8px;background:#f1f5f9;border-radius:99px;font-size:10px;font-weight:700">${b.tipoBaja||'—'}</span></td>
+        </tr>`;
+      }).join('')}
+    </tbody>
+  </table></div>
+</div>`;
+}
+
+// ── Sub-pestaña: Promociones internas (pendiente) ──────────────────────────
+function indicadoresPromocionesHTML(){
+  return `<div class="empty-state" style="padding:60px 0;text-align:center">
+    <div style="font-size:40px;margin-bottom:12px">📈</div>
+    <div style="font-size:16px;font-weight:600;color:var(--text2)">Promociones Internas</div>
+    <div style="font-size:13px;color:var(--text2);margin-top:6px">En construcción</div>
+    <div style="font-size:12px;color:var(--text2);margin-top:14px;max-width:420px;margin-left:auto;margin-right:auto;line-height:1.6">
+      KPI propuesto: (Promociones internas / Vacantes cubiertas) × 100 — meta ≥20% de vacantes cubiertas con talento interno.
+    </div>
+  </div>`;
+}
+
+// ── Sub-pestaña: Plan de Cultura (captura vía Excel) ────────────────────────
+let culturaDB = JSON.parse(localStorage.getItem('afimex-cultura')||'null') || {};
+
+function indicadoresCulturaHTML(){
+  const anio = window._indAnio || '2026';
+  const datosAnio = culturaDB[anio] || {};
+  const hayDatos = Object.keys(datosAnio).length>0;
+  const fmtN = n => Number(n||0).toLocaleString('es-MX');
+
+  const selectorBar = `
+<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:20px">
+  <div>
+    <div style="font-size:18px;font-weight:700;color:var(--afimex-blue)">Plan de Cultura</div>
+    <div style="font-size:12px;color:var(--text2);margin-top:2px">Cumplimiento de iniciativas del plan anual ${anio}</div>
+  </div>
+  <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+    <div style="display:flex;align-items:center;gap:6px">
+      <label style="font-size:12px;color:var(--text2);font-weight:500">Año:</label>
+      <select onchange="window._indAnio=this.value;render()" style="border:1px solid var(--border2);border-radius:var(--radius-sm);padding:6px 10px;font-size:13px">
+        ${['2024','2025','2026','2027'].map(a=>`<option value="${a}" ${a===anio?'selected':''}>${a}</option>`).join('')}
+      </select>
+    </div>
+    <label style="display:inline-flex;align-items:center;gap:8px;padding:8px 16px;background:var(--afimex-orange);color:white;border-radius:var(--radius-sm);font-size:13px;font-weight:600;cursor:pointer">
+      📂 Cargar Excel
+      <input type="file" accept=".xlsx,.xls" style="display:none" onchange="culturaCargarExcel(this,'${anio}')">
+    </label>
+    ${hayDatos?`<button onclick="culturaBorrarAnio('${anio}')" style="padding:8px 14px;background:#fff1f2;border:1px solid #fecdd3;color:#e11d48;border-radius:var(--radius-sm);font-size:12px;cursor:pointer">🗑 Borrar ${anio}</button>`:''}
+  </div>
+</div>`;
+
+  if(!hayDatos){
+    return selectorBar + `
+<div style="background:white;border:2px dashed var(--border2);border-radius:var(--radius);padding:40px;text-align:center">
+  <div style="font-size:36px;margin-bottom:10px">💜</div>
+  <div style="font-size:14px;font-weight:600;color:var(--text2);margin-bottom:6px">Sin datos cargados para ${anio}</div>
+  <div style="font-size:12px;color:var(--text2);max-width:420px;margin:0 auto;line-height:1.6">
+    Carga el Excel del plan de cultura con columnas: <strong>MES, INICIATIVA, ESTATUS (completada/en proceso/pendiente), PLANEADAS, EJECUTADAS</strong>.
+  </div>
+</div>`;
+  }
+
+  const meses = Object.keys(datosAnio).filter(m=>MESES_LABELS.includes(m));
+  const totalPlan = meses.reduce((s,m)=>s+(datosAnio[m].planeadas||0),0);
+  const totalEjec = meses.reduce((s,m)=>s+(datosAnio[m].ejecutadas||0),0);
+  const cumplGlobal = totalPlan>0 ? (totalEjec/totalPlan*100) : 0;
+  const todasIniciativas = meses.flatMap(m=>(datosAnio[m].iniciativas||[]).map(i=>({...i,mes:m})));
+  const completadas = todasIniciativas.filter(i=>(i.estatus||'').toLowerCase().includes('complet'));
+  const enProceso = todasIniciativas.filter(i=>(i.estatus||'').toLowerCase().includes('proceso'));
+  const pendientes = todasIniciativas.filter(i=>(i.estatus||'').toLowerCase().includes('pendiente'));
+
+  const chartBarId = 'ch-cultura-bar-'+Date.now();
+  const chartPieId = 'ch-cultura-pie-'+Date.now();
+
+  setTimeout(()=>{
+    if(window._chCulturaBar) window._chCulturaBar.destroy();
+    if(window._chCulturaPie) window._chCulturaPie.destroy();
+    const ctxB = document.getElementById(chartBarId);
+    const ctxP = document.getElementById(chartPieId);
+    if(ctxB) window._chCulturaBar = new Chart(ctxB, {
+      type:'bar',
+      data:{ labels:MESES_LABELS, datasets:[
+        {label:'Planeadas', data:MESES_LABELS.map(m=>datosAnio[m]?.planeadas||null), backgroundColor:'rgba(250,199,117,.6)', borderRadius:3},
+        {label:'Ejecutadas', data:MESES_LABELS.map(m=>datosAnio[m]?.ejecutadas||null), backgroundColor:'rgba(124,58,237,.8)', borderRadius:3},
+      ]},
+      options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{display:true,position:'bottom',labels:{font:{size:11}}}}, scales:{x:{grid:{display:false}},y:{beginAtZero:true}} }
+    });
+    if(ctxP) window._chCulturaPie = new Chart(ctxP, {
+      type:'doughnut',
+      data:{ labels:['Completadas','En proceso','Pendientes'], datasets:[{ data:[completadas.length,enProceso.length,pendientes.length], backgroundColor:['#16a34a','#f59e0b','#9ca3af'], borderWidth:0 }] },
+      options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{display:true,position:'bottom',labels:{font:{size:11},boxWidth:10}}} }
+    });
+  }, 30);
+
+  return selectorBar + `
+<div class="stats-row" style="margin-bottom:20px">
+  <div class="stat-card"><div class="stat-label">Iniciativas totales ${anio}</div><div class="stat-value" style="color:var(--afimex-blue)">${fmtN(todasIniciativas.length)}</div></div>
+  <div class="stat-card"><div class="stat-label">Completadas</div><div class="stat-value" style="color:#16a34a">${fmtN(completadas.length)}</div></div>
+  <div class="stat-card"><div class="stat-label">En proceso</div><div class="stat-value" style="color:#f59e0b">${fmtN(enProceso.length)}</div></div>
+  <div class="stat-card"><div class="stat-label">Cumplimiento global</div><div class="stat-value" style="color:${cumplGlobal>=85?'#16a34a':cumplGlobal>=70?'#f59e0b':'#dc2626'}">${cumplGlobal.toFixed(0)}%</div></div>
+</div>
+
+<div style="display:grid;grid-template-columns:1.3fr 1fr;gap:16px;margin-bottom:20px">
+  <div style="background:white;border:1px solid var(--border);border-radius:var(--radius);padding:16px">
+    <div style="font-size:13px;font-weight:700;color:var(--afimex-blue);margin-bottom:10px">Planeadas vs ejecutadas por mes</div>
+    <div style="position:relative;width:100%;height:220px"><canvas id="${chartBarId}"></canvas></div>
+  </div>
+  <div style="background:white;border:1px solid var(--border);border-radius:var(--radius);padding:16px">
+    <div style="font-size:13px;font-weight:700;color:var(--afimex-blue);margin-bottom:10px">Estatus de iniciativas</div>
+    <div style="position:relative;width:100%;height:220px"><canvas id="${chartPieId}"></canvas></div>
+  </div>
+</div>
+
+<div style="background:white;border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;margin-bottom:20px">
+  <div style="background:#1e3a5f;padding:10px 16px"><div style="font-size:13px;font-weight:700;color:white;text-transform:uppercase;letter-spacing:.5px">Detalle de iniciativas — ${anio}</div></div>
+  <div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12px">
+    <thead><tr>
+      <th style="padding:8px 12px;border:1px solid var(--border);background:#f8fafc;text-align:left">Mes</th>
+      <th style="padding:8px 12px;border:1px solid var(--border);background:#f8fafc;text-align:left">Iniciativa</th>
+      <th style="padding:8px 12px;border:1px solid var(--border);background:#f8fafc;text-align:center">Estatus</th>
+    </tr></thead>
+    <tbody>
+    ${todasIniciativas.length===0?`<tr><td colspan="3" style="padding:20px;text-align:center;color:var(--text2)">Sin iniciativas detalladas en el Excel cargado</td></tr>`:
+      todasIniciativas.map((it,i)=>{
+        const bg = i%2===0?'white':'#f9fafb';
+        const st = (it.estatus||'').toLowerCase();
+        const color = st.includes('complet')?'#16a34a':st.includes('proceso')?'#f59e0b':'#9ca3af';
+        return `<tr style="background:${bg}">
+          <td style="padding:7px 12px;border:1px solid var(--border);font-weight:600;color:var(--afimex-blue)">${it.mes}</td>
+          <td style="padding:7px 12px;border:1px solid var(--border)">${it.nombre||'—'}</td>
+          <td style="padding:7px 12px;border:1px solid var(--border);text-align:center"><span style="padding:2px 10px;background:${color}1a;color:${color};border-radius:99px;font-size:10px;font-weight:700">${it.estatus||'—'}</span></td>
+        </tr>`;
+      }).join('')}
+    </tbody>
+  </table></div>
+</div>
+
+<div style="background:var(--afimex-blue-light);border-radius:var(--radius);padding:14px 16px">
+  <div style="font-size:11px;font-weight:700;color:var(--afimex-blue);margin-bottom:6px;text-transform:uppercase">KPI propuesto — cumplimiento plan de cultura</div>
+  <div style="font-size:12px;color:var(--afimex-blue);line-height:1.6">Fórmula: (Iniciativas ejecutadas / Planeadas del mes) × 100. Meta propuesta: ≥85% mensual, 100% al cierre del año.</div>
+</div>`;
+}
+
+function culturaCargarExcel(input, anio){
+  const file = input.files[0];
+  if(!file) return;
+  if(typeof XLSX==='undefined'){
+    const script=document.createElement('script');
+    script.src='https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+    script.onload = () => culturaProcesarExcel(file, anio);
+    document.head.appendChild(script);
+  } else {
+    culturaProcesarExcel(file, anio);
+  }
+}
+
+function culturaProcesarExcel(file, anio){
+  const reader = new FileReader();
+  reader.onload = function(e){
+    try{
+      const data = new Uint8Array(e.target.result);
+      const wb = XLSX.read(data, {type:'array'});
+      const sheet = wb.Sheets[wb.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(sheet, {defval:''});
+      if(!culturaDB[anio]) culturaDB[anio] = {};
+      MESES_LABELS.forEach(m=>{ culturaDB[anio][m] = {planeadas:0, ejecutadas:0, iniciativas:[]}; });
+      rows.forEach(r=>{
+        const mesRaw = String(r.MES||r.Mes||r.mes||'').toUpperCase().trim().slice(0,3);
+        const mes = MESES_LABELS.find(m=>m===mesRaw);
+        if(!mes) return;
+        const nombre = r.INICIATIVA||r.Iniciativa||r.iniciativa||'';
+        const estatus = r.ESTATUS||r.Estatus||r.estatus||'';
+        culturaDB[anio][mes].iniciativas.push({nombre, estatus});
+        culturaDB[anio][mes].planeadas++;
+        if((estatus||'').toLowerCase().includes('complet')) culturaDB[anio][mes].ejecutadas++;
+      });
+      localStorage.setItem('afimex-cultura', JSON.stringify(culturaDB));
+      showToast('✓ Plan de cultura cargado — '+rows.length+' iniciativas');
+      render();
+    }catch(err){
+      console.error(err);
+      showToast('Error al leer el Excel. Verifica las columnas.', '#dc2626');
+    }
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+function culturaBorrarAnio(anio){
+  if(!confirm('¿Borrar todos los datos de cultura de '+anio+'?')) return;
+  delete culturaDB[anio];
+  localStorage.setItem('afimex-cultura', JSON.stringify(culturaDB));
+  render();
+}
+
+// ── Sub-pestaña: Calificación global de KPIs ────────────────────────────────
+function indicadoresCalificacionHTML(){
+  const anio = window._indAnio || '2026';
+  const mes = window._indMes || MESES_LABELS[new Date().getMonth()];
+  const datosNom = (indicadoresNominasDB[anio]||{})[mes] || {};
+
+  // Rotación operativa — desde Costo de Rotación si hay captura del mes
+  const crDatos = (window._crDatos&&window._crDatos[anio]&&window._crDatos[anio][mes]) || null;
+  const altasMes = crDatos ? (crDatos.altasOp||0)+(crDatos.altasOperativas||0)+(crDatos.altasAdm||0) : 0;
+  const bajasMes = crDatos ? (crDatos.bajasSV||0)+(crDatos.bajasAT||0)+(crDatos.bajasTC||0) : 0;
+  const plantillaProm = datosNom.pg || 0;
+  const rotacionPct = (crDatos && plantillaProm>0) ? (bajasMes/plantillaProm*100) : null;
+
+  // Permanencia 0-30 días del mes
+  const altasPorMesP = (db||[]).filter(r=>{
+    if(!r.fechaIngreso) return false;
+    const d = new Date(r.fechaIngreso+'T12:00:00');
+    return String(d.getFullYear())===anio && MESES_LABELS[d.getMonth()]===mes;
+  }).length;
+  const bajas030 = (finiquitosDB||[]).filter(f=>{
+    if(!f.fechaIngreso||!f.fechaBaja) return false;
+    const ing = new Date(f.fechaIngreso+'T12:00:00');
+    const baja = new Date(f.fechaBaja+'T12:00:00');
+    const dias = Math.floor((baja-ing)/86400000);
+    return String(baja.getFullYear())===anio && MESES_LABELS[baja.getMonth()]===mes && dias>=0 && dias<=30;
+  }).length;
+  const permPct = altasPorMesP>0 ? (bajas030/altasPorMesP*100) : null;
+
+  // Costo de nómina vs ventas
+  const nomPct = datosNom.total && datosNom.venta ? (datosNom.total/datosNom.venta*100) : null;
+
+  // Cultura
+  const culMes = (culturaDB[anio]||{})[mes];
+  const cultPct = culMes && culMes.planeadas>0 ? (culMes.ejecutadas/culMes.planeadas*100) : null;
+
+  const evalKpi = (val, escala) => {
+    if(val==null) return {p:0, label:'Sin datos', color:'#9ca3af'};
+    for(const e of escala){ if(e.cmp(val)) return {p:e.p, label:e.label, color:e.p>=80?'#16a34a':e.p>=60?'#f59e0b':'#dc2626'}; }
+    return {p:0, label:'Fuera de meta', color:'#dc2626'};
+  };
+
+  const KPIS = [
+    {nombre:'Rotación operativa', peso:15, val:rotacionPct, fmt:v=>v.toFixed(2)+'%', meta:'≤7%',
+      r: evalKpi(rotacionPct, [{cmp:v=>v<=7,p:100,label:'Meta lograda'},{cmp:v=>v<=8,p:80,label:'En rango'}])},
+    {nombre:'Cobertura en tiempo', peso:20, val:null, fmt:v=>v+'%', meta:'≥85%',
+      r:{p:0,label:'Captura manual pendiente',color:'#9ca3af'}},
+    {nombre:'Permanencia 0-30 días', peso:15, val:permPct, fmt:v=>v.toFixed(1)+'%', meta:'≤15%',
+      r: evalKpi(permPct, [{cmp:v=>v<=10,p:100,label:'Excelente'},{cmp:v=>v<=15,p:80,label:'En meta'},{cmp:v=>v<=18,p:60,label:'Revisar'}])},
+    {nombre:'Calidad de nómina', peso:15, val:null, fmt:()=>'0 errores', meta:'0 errores',
+      r:{p:100,label:'Perfecto',color:'#16a34a'}},
+    {nombre:'Cumplimiento legal', peso:15, val:null, fmt:()=>'0 incidencias', meta:'0 incid.',
+      r:{p:100,label:'Perfecto',color:'#16a34a'}},
+    {nombre:'Onboarding / Capacitación', peso:10, val:null, fmt:()=>'—', meta:'100% / 15 días',
+      r:{p:0,label:'Sin captura',color:'#9ca3af'}},
+    {nombre:'Costo nómina vs ventas', peso:10, val:nomPct, fmt:v=>v.toFixed(2)+'%', meta:'≤37%',
+      r: evalKpi(nomPct, [{cmp:v=>v<=35,p:100,label:'Excelente ≤35%'},{cmp:v=>v<=37,p:80,label:'En meta'},{cmp:v=>v<=38.5,p:60,label:'Revisar'}])},
+  ];
+
+  const KPIS_NUEVOS = [
+    {nombre:'Promociones internas', meta:'KPI propuesto ≥20%', val:'En construcción'},
+    {nombre:'Permanencia >90 días', meta:'KPI propuesto ≥75%', val:'Ver pestaña Permanencia'},
+    {nombre:'Plan de cultura', meta:'KPI propuesto ≥85%', val: cultPct!=null?cultPct.toFixed(0)+'%':'Sin Excel cargado'},
+  ];
+
+  let total = 0;
+  const filasScore = KPIS.map(k=>{
+    const pts = k.r.p/100*k.peso;
+    total += pts;
+    return `<div style="display:flex;align-items:center;gap:10px;margin-bottom:9px">
+      <span style="font-size:12px;color:var(--text2);flex:1.4">${k.nombre} <span style="color:var(--text2);font-size:11px">(${k.peso}%)</span></span>
+      <div style="flex:1.6;height:8px;background:var(--bg2);border-radius:4px;overflow:hidden"><div style="height:100%;width:${k.r.p}%;background:${k.r.color};border-radius:4px"></div></div>
+      <span style="font-size:12px;font-weight:700;min-width:60px;text-align:right;color:${k.r.color}">${pts.toFixed(1)} / ${k.peso}</span>
+    </div>`;
+  }).join('');
+
+  const bono = total>=100?100:total>=90?90:total>=85?80:total>=80?70:total>=70?50:0;
+  const colorTotal = total>=90?'#16a34a':total>=70?'#f59e0b':'#dc2626';
+
+  const selectorBar = `
+<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:20px">
+  <div>
+    <div style="font-size:18px;font-weight:700;color:var(--afimex-blue)">Calificación Global de KPIs</div>
+    <div style="font-size:12px;color:var(--text2);margin-top:2px">Resultado consolidado — ${mes} ${anio}</div>
+  </div>
+  <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+    <div style="display:flex;align-items:center;gap:6px">
+      <label style="font-size:12px;color:var(--text2);font-weight:500">Año:</label>
+      <select onchange="window._indAnio=this.value;render()" style="border:1px solid var(--border2);border-radius:var(--radius-sm);padding:6px 10px;font-size:13px">
+        ${['2024','2025','2026','2027'].map(a=>`<option value="${a}" ${a===anio?'selected':''}>${a}</option>`).join('')}
+      </select>
+    </div>
+    <div style="display:flex;align-items:center;gap:6px">
+      <label style="font-size:12px;color:var(--text2);font-weight:500">Mes:</label>
+      <select onchange="window._indMes=this.value;render()" style="border:1px solid var(--border2);border-radius:var(--radius-sm);padding:6px 10px;font-size:13px">
+        ${MESES_LABELS.map(m=>`<option value="${m}" ${m===mes?'selected':''}>${m}</option>`).join('')}
+      </select>
+    </div>
+  </div>
+</div>`;
+
+  return selectorBar + `
+<div style="background:white;border:1px solid var(--border);border-radius:var(--radius);padding:18px;margin-bottom:20px">
+  <div style="font-size:13px;font-weight:700;color:var(--afimex-blue);margin-bottom:14px">Detalle por KPI</div>
+  ${filasScore}
+  <div style="display:flex;justify-content:space-between;align-items:center;padding-top:14px;margin-top:6px;border-top:1px solid var(--border)">
+    <span style="font-size:14px;font-weight:700">Calificación global</span>
+    <span style="font-size:28px;font-weight:700;color:${colorTotal}">${total.toFixed(1)}%</span>
+  </div>
+  <div style="margin-top:12px;padding:10px 14px;border-radius:8px;background:${bono>=80?'#f0fdf4':'#fffbeb'};color:${bono>=80?'#15803d':'#b45309'};font-size:13px;font-weight:600;text-align:center">
+    Bono correspondiente: ${bono}% ${bono===0?'— Revisar Cobertura en tiempo / completar capturas pendientes':''}
+  </div>
+</div>
+
+<div style="background:white;border:2px dashed var(--afimex-blue);border-radius:var(--radius);padding:16px">
+  <div style="font-size:11px;font-weight:700;color:var(--afimex-blue);text-transform:uppercase;margin-bottom:10px">Indicadores nuevos propuestos</div>
+  <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px">
+    ${KPIS_NUEVOS.map(k=>`
+    <div style="background:var(--bg2);border-radius:8px;padding:12px">
+      <div style="font-size:11px;color:var(--text2);margin-bottom:4px">${k.nombre}</div>
+      <div style="font-size:15px;font-weight:700;color:var(--afimex-blue)">${k.val}</div>
+      <div style="font-size:10px;color:var(--text2);margin-top:4px">${k.meta}</div>
+    </div>`).join('')}
+  </div>
+</div>
+
+<div style="font-size:11px;color:var(--text2);margin-top:14px;line-height:1.6">
+  Nota: Rotación y Costo de nómina se calculan automáticamente desde los módulos de Costo de Rotación e Indicadores de Nómina. Cobertura en tiempo, Calidad de nómina, Cumplimiento legal y Capacitación requieren captura manual (próxima iteración).
 </div>`;
 }
 
