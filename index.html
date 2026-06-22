@@ -167,7 +167,7 @@ input.field-ok { border-color: #16a34a; background: #f0fdf4; }
     <div style="display:flex;align-items:center;gap:12px">
       <div>
         <div class="topbar-title">AFIMEX PEOPLE</div>
-        <div class="topbar-sub">V 12.0.9 | Recursos Humanos</div>
+        <div class="topbar-sub">V 12.0.10 | Recursos Humanos</div>
       </div>
     </div>
     <div style="position:absolute;left:50%;transform:translateX(-50%)">
@@ -5889,7 +5889,7 @@ function configPosicionesHTML(){
         + '>' + safeActText + '</textarea>'
         + '<div style="display:flex;align-items:center;justify-content:space-between;margin-top:4px">'
         + '<span style="font-size:11px;color:var(--text2)">&#128161; Una actividad por l&#237;nea</span>'
-        + '<button onclick="configGuardar()" style="background:var(--afimex-blue);color:white;border:none;border-radius:4px;padding:3px 12px;font-size:11px;cursor:pointer;font-weight:600">&#128190; Guardar</button>'
+        + '<button onclick="descGuardarYCerrar(\''+safePuesto+'\')" style="background:var(--afimex-blue);color:white;border:none;border-radius:4px;padding:3px 12px;font-size:11px;cursor:pointer;font-weight:600">&#128190; Guardar</button>'
         + '</div>'
         + '</div>';
     } else {
@@ -7717,8 +7717,42 @@ function posicionRenombrar(oldKey, oldPuesto, newPuesto){
 }
 function descActualizarTodas(puesto, valor){
   ACTIVIDADES[puesto] = valor.split('\n').map(function(l){return l.trim();}).filter(function(l){return l.length>0;});
-  // Guardar en localStorage inmediatamente (sin subir a Drive en cada keystroke)
   localStorage.setItem('afimex-config-actividades', JSON.stringify(ACTIVIDADES));
+}
+
+async function descGuardarYCerrar(puesto){
+  // Leer el valor actual del textarea antes de cerrar
+  const ta = document.querySelector('textarea[data-puesto="'+puesto+'"]') 
+          || document.querySelector('textarea');
+  if(ta) descActualizarTodas(puesto, ta.value);
+
+  // Cerrar el editor
+  window._posPuestoSel = null;
+
+  // Mostrar indicador visual
+  const saving = document.createElement('div');
+  saving.style.cssText = 'position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#1A5FA8;color:white;padding:12px 24px;border-radius:99px;font-size:13px;font-weight:600;box-shadow:0 4px 20px rgba(0,0,0,.2);z-index:9999;display:flex;align-items:center;gap:10px';
+  saving.innerHTML = '<span style="display:inline-block;width:16px;height:16px;border:2px solid rgba(255,255,255,.4);border-top-color:white;border-radius:50%;animation:spin .7s linear infinite"></span> Guardando descripción...';
+  if(!document.getElementById('spin-style')){
+    const st=document.createElement('style');st.id='spin-style';
+    st.textContent='@keyframes spin{to{transform:rotate(360deg)}}';
+    document.head.appendChild(st);
+  }
+  document.body.appendChild(saving);
+
+  // Re-render para cerrar el editor
+  render();
+
+  // Guardar en Drive
+  try{
+    await configGuardar();
+    saving.style.background='#16a34a';
+    saving.innerHTML='✓ Descripción guardada correctamente';
+  }catch(e){
+    saving.style.background='#f59e0b';
+    saving.innerHTML='⚠ Guardado local. Sin conexión a Drive';
+  }
+  setTimeout(()=>{saving.style.opacity='0';setTimeout(()=>saving.remove(),300);},2500);
 }
 function descAgregarActividad(puesto){
   if(!ACTIVIDADES[puesto]) ACTIVIDADES[puesto] = [];
