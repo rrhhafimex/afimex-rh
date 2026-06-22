@@ -167,7 +167,7 @@ input.field-ok { border-color: #16a34a; background: #f0fdf4; }
     <div style="display:flex;align-items:center;gap:12px">
       <div>
         <div class="topbar-title">AFIMEX PEOPLE</div>
-        <div class="topbar-sub">V 12.0.10 | Recursos Humanos</div>
+        <div class="topbar-sub">V 12.0.12 | Recursos Humanos</div>
       </div>
     </div>
     <div style="position:absolute;left:50%;transform:translateX(-50%)">
@@ -5883,13 +5883,12 @@ function configPosicionesHTML(){
       var actText = acts.join('\n');
       var safeActText = actText.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
       descCell = '<div>'
-        + '<textarea rows="6" '
+        + '<textarea rows="6" data-puesto="'+safePuesto+'" '
         + 'onchange="descActualizarTodas(' + "'" + safePuesto + "'" + ',this.value)" '
         + 'style="width:100%;padding:6px 8px;border:1px solid var(--border2);border-radius:4px;font-size:12px;font-family:inherit;resize:vertical;min-height:100px"'
         + '>' + safeActText + '</textarea>'
-        + '<div style="display:flex;align-items:center;justify-content:space-between;margin-top:4px">'
+        + '<div style="margin-top:4px">'
         + '<span style="font-size:11px;color:var(--text2)">&#128161; Una actividad por l&#237;nea</span>'
-        + '<button onclick="descGuardarYCerrar(\''+safePuesto+'\')" style="background:var(--afimex-blue);color:white;border:none;border-radius:4px;padding:3px 12px;font-size:11px;cursor:pointer;font-weight:600">&#128190; Guardar</button>'
         + '</div>'
         + '</div>';
     } else {
@@ -5914,7 +5913,7 @@ function configPosicionesHTML(){
       row += '<td colspan="3" style="padding:6px 12px 8px;border:1px solid var(--border);border-top:none">';
       row += '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">';
       row += '<span style="font-size:11px;color:var(--text2)">💡 Editando: <strong>'+f.puesto+'</strong></span>';
-      row += '<button onclick="configGuardar()" style="background:var(--afimex-blue);color:white;border:none;border-radius:4px;padding:5px 14px;cursor:pointer;font-size:12px;font-weight:700">💾 Guardar cambios</button>';
+      row += '<button onclick="descGuardarYCerrar(\''+safePuesto+'\')" style="background:var(--afimex-blue);color:white;border:none;border-radius:4px;padding:5px 14px;cursor:pointer;font-size:12px;font-weight:700">💾 Guardar cambios</button>';
       row += '<a onclick="window._posPuestoSel=\'\';render()" style="color:var(--text2);cursor:pointer;font-size:11px;text-decoration:underline">Cerrar sin guardar</a>';
       row += '</div></td></tr>';
     }
@@ -7721,9 +7720,8 @@ function descActualizarTodas(puesto, valor){
 }
 
 async function descGuardarYCerrar(puesto){
-  // Leer el valor actual del textarea antes de cerrar
-  const ta = document.querySelector('textarea[data-puesto="'+puesto+'"]') 
-          || document.querySelector('textarea');
+  // Leer el valor actual del textarea por data-puesto antes de cerrar
+  const ta = document.querySelector('textarea[data-puesto="'+puesto+'"]');
   if(ta) descActualizarTodas(puesto, ta.value);
 
   // Cerrar el editor
