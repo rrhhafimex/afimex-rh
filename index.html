@@ -167,7 +167,7 @@ input.field-ok { border-color: #16a34a; background: #f0fdf4; }
     <div style="display:flex;align-items:center;gap:12px">
       <div>
         <div class="topbar-title">AFIMEX PEOPLE</div>
-        <div class="topbar-sub">V 12.0.14 | Recursos Humanos</div>
+        <div class="topbar-sub">V 12.0.15 | Recursos Humanos</div>
       </div>
     </div>
     <div style="position:absolute;left:50%;transform:translateX(-50%)">
@@ -411,45 +411,46 @@ window.gsCallback = function(name, data){
 function jsonpSend(sheet, data){
   return new Promise((resolve, reject)=>{
     const json = JSON.stringify(data);
-    const SIZE = 2000;
+    const SIZE = 10000; // Aumentado de 2000→10000 para reducir cantidad de chunks (v12.0.15)
     const chunks = [];
     for(let i=0;i<json.length;i+=SIZE) chunks.push(json.slice(i,i+SIZE));
 
     const uid = Date.now()+'_'+Math.random().toString(36).slice(2,6);
     let idx = 0;
-    let retries = 0;
     const MAX_RETRIES = 3;
 
-    function sendNext(){
-      if(idx >= chunks.length){ resolve({ok:true}); return; }
+    function sendChunk(chunkIdx, retriesLeft){
+      if(chunkIdx >= chunks.length){ resolve({ok:true}); return; }
 
-      const chunkIdx = idx;
-      // Nombre único de callback para este chunk — lo registramos directamente en window
-      const cbName = 'gsChunk_'+sheet.replace(/[^a-zA-Z0-9]/g,'_')+'_'+uid+'_'+chunkIdx;
+      // Nombre único de callback — incluye intento para evitar colisiones en retry
+      const cbName = 'gsChunk_'+sheet.replace(/[^a-zA-Z0-9]/g,'_')+'_'+uid+'_'+chunkIdx+'_r'+(MAX_RETRIES-retriesLeft);
 
       const t = setTimeout(function(){
         delete window[cbName];
-        retries++;
-        if(retries <= MAX_RETRIES){ sendNext(); }
-        else { reject(new Error('Timeout en "'+sheet+'" chunk '+chunkIdx+'/'+(chunks.length-1))); }
-      }, 15000);
+        if(retriesLeft > 0){
+          // Esperar 1.5s antes de reintentar el MISMO chunk con retries frescos
+          setTimeout(()=>sendChunk(chunkIdx, retriesLeft-1), 1500);
+        } else {
+          reject(new Error('Timeout en "'+sheet+'" chunk '+chunkIdx+'/'+(chunks.length-1)+' — intenta de nuevo'));
+        }
+      }, 25000); // Timeout aumentado 15s→25s
 
-      // El Apps Script llamará cbName(result) directamente
       window[cbName] = function(result){
         clearTimeout(t);
         delete window[cbName];
-        retries = 0;
-        idx++;
-        sendNext();
+        idx = chunkIdx + 1;
+        sendChunk(idx, MAX_RETRIES); // Siguiente chunk con retries frescos
       };
 
       const s = document.createElement('script');
       s.onerror = function(){
         clearTimeout(t);
         delete window[cbName];
-        retries++;
-        if(retries <= MAX_RETRIES){ sendNext(); }
-        else { reject(new Error('Error de red en "'+sheet+'"')); }
+        if(retriesLeft > 0){
+          setTimeout(()=>sendChunk(chunkIdx, retriesLeft-1), 1500);
+        } else {
+          reject(new Error('Error de red en "'+sheet+'" chunk '+chunkIdx));
+        }
       };
       s.src = APPS_SCRIPT_URL
         + '?action=saveChunk'
@@ -459,9 +460,9 @@ function jsonpSend(sheet, data){
         + '&data='  + encodeURIComponent(chunks[chunkIdx])
         + '&callback=' + encodeURIComponent(cbName);
       document.head.appendChild(s);
-      setTimeout(function(){ try{document.head.removeChild(s);}catch(e){} }, 17000);
+      setTimeout(function(){ try{document.head.removeChild(s);}catch(e){} }, 28000);
     }
-    sendNext();
+    sendChunk(0, MAX_RETRIES);
   });
 }
 
@@ -495,7 +496,7 @@ async function gsCall(action, data){
     // LEER siempre via JSONP — funciona en todas las computadoras sin problemas de CORS
     return new Promise((resolve) => {
       const cbName = 'gsCb_' + Date.now();
-      const t = setTimeout(() => { delete window[cbName]; resolve({ ok: false, error: 'timeout' }); }, 20000);
+      const t = setTimeout(() => { delete window[cbName]; resolve({ ok: false, error: 'timeout' }); }, 45000); // v12.0.15: aumentado 20s→45s para hojas grandes
       window[cbName] = (r) => { clearTimeout(t); delete window[cbName]; resolve(r); };
       const s = document.createElement('script');
       s.src = APPS_SCRIPT_URL + '?action=' + encodeURIComponent(action) + '&callback=' + cbName;
@@ -779,11 +780,20 @@ async function sincronizarDesdeGSheets(){
     if(dfi && typeof dfi==='object'){ window.DOC_FINIQ_CONFIG=dfi; localStorage.setItem('afimex-config-docfiniq',JSON.stringify(dfi)); }
 
     hideLoading(); setSyncStatus('ok');
-    showToast('✓ Datos y catálogos sincronizados correctamente');
+    // Resumen de lo que se descargó
+    const resumen = [
+      db.length+' exp.',
+      finiquitosDB.length+' finiq.',
+      seguimientos.length+' seg.',
+      incapacidadesDB.length+' incap.',
+      activosDB.length+' activos'
+    ].join(' | ');
+    showToast('✓ Sincronizado: '+resumen);
     render();
   } catch(e){
     hideLoading(); setSyncStatus('error');
-    showToast('No se pudo conectar con Google Sheets','#dc2626');
+    showToast('No se pudo conectar con Google Sheets: '+e.message,'#dc2626');
+    console.error('Error en bajar:', e);
   }
 }
 
@@ -885,38 +895,58 @@ async function subirTodoANube(){
     const svM = JSON.parse(localStorage.getItem('afimex-sv-folios')||'[]');
     const fmM = JSON.parse(localStorage.getItem('afimex-folios-manual')||'[]');
 
-    const hojas = [
-      {label:'Expedientes',   fn:()=>jsonpSend('Expedientes',   db)},
-      {label:'Seguimiento',   fn:()=>jsonpSend('Seguimiento',   seguimientos)},
-      {label:'Folios',        fn:()=>jsonpSend('Folios',        foliosData)},
-      {label:'Finiquitos',    fn:()=>jsonpSend('Finiquitos',    finiquitosDB)},
-      {label:'Incapacidades', fn:()=>jsonpSend('Incapacidades', incapacidadesDB)},
-      {label:'Pendientes',    fn:()=>jsonpSend('Pendientes',    pendientesDB)},
-      {label:'Cat_Nominas',   fn:()=>jsonpSend('Cat_Nominas',   DATA_NOMINAS)},
-      {label:'Cat_IATA',      fn:()=>jsonpSend('Cat_IATA',      IATA_MAP)},
-      {label:'Cat_Puestos',   fn:()=>jsonpSend('Cat_Puestos',   PUESTOS_POR_OFICINA)},
-      {label:'Cat_Posiciones',fn:()=>jsonpSend('Cat_Posiciones',DATA_POSICIONES)},
-      {label:'Cat_Direcciones',fn:()=>jsonpSend('Cat_Direcciones',OFICINAS_DIR)},
-      {label:'Cat_Actividades',fn:()=>jsonpSend('Cat_Actividades',ACTIVIDADES)},
-      {label:'Cat_Prestaciones',fn:()=>jsonpSend('Cat_Prestaciones',PRESTACIONES_CONFIG)},
-      {label:'Cat_DocFiniq',  fn:()=>jsonpSend('Cat_DocFiniq',  window.DOC_FINIQ_CONFIG||{})},
-      {label:'Cat_RegPatronal',fn:()=>jsonpSend('Cat_RegPatronal',DATA_REGISTROS_PATRONALES)},
-      {label:'Cat_Salarios',  fn:()=>jsonpSend('Cat_Salarios',  DATA_SALARIOS)},
-    ];
-    if(svM.length > 0)      hojas.push({label:'SV_Folios',    fn:()=>jsonpSend('SV_Folios',    svM)});
-    if(fmM.length > 0)      hojas.push({label:'Folios_Manual',fn:()=>jsonpSend('Folios_Manual',fmM)});
-    if(usuarios.length > 0) hojas.push({label:'Usuarios',     fn:()=>jsonpSend('Usuarios',     usuarios)});
-
-    for(let i=0; i<hojas.length; i++){
-      const h = hojas[i];
-      showLoading('⬆ Subiendo ('+(i+1)+'/'+hojas.length+')', h.label+'...');
-      await h.fn();
+    // Helper para mostrar conteo de registros en el loading
+    function conteo(dato){
+      if(Array.isArray(dato)) return dato.length+' registros';
+      if(dato && typeof dato==='object') return Object.keys(dato).length+' entradas';
+      return '';
     }
 
-    setSyncStatus('ok');
+    const hojas = [
+      {label:'Expedientes',    info:conteo(db),                        fn:()=>jsonpSend('Expedientes',   db)},
+      {label:'Seguimiento',    info:conteo(seguimientos),               fn:()=>jsonpSend('Seguimiento',   seguimientos)},
+      {label:'Folios',         info:conteo(foliosData),                 fn:()=>jsonpSend('Folios',        foliosData)},
+      {label:'Finiquitos',     info:conteo(finiquitosDB),               fn:()=>jsonpSend('Finiquitos',    finiquitosDB)},
+      {label:'Incapacidades',  info:conteo(incapacidadesDB),            fn:()=>jsonpSend('Incapacidades', incapacidadesDB)},
+      {label:'Pendientes',     info:conteo(pendientesDB),               fn:()=>jsonpSend('Pendientes',    pendientesDB)},
+      {label:'Plantilla',      info:conteo(plantillaDB),                fn:()=>jsonpSend('Plantilla',     plantillaDB)},
+      {label:'Activos',        info:conteo(activosDB),                  fn:()=>jsonpSend('Activos',       activosDB)},
+      {label:'Cat_Nominas',    info:conteo(DATA_NOMINAS),               fn:()=>jsonpSend('Cat_Nominas',   DATA_NOMINAS)},
+      {label:'Cat_IATA',       info:conteo(IATA_MAP),                   fn:()=>jsonpSend('Cat_IATA',      IATA_MAP)},
+      {label:'Cat_Puestos',    info:conteo(PUESTOS_POR_OFICINA),        fn:()=>jsonpSend('Cat_Puestos',   PUESTOS_POR_OFICINA)},
+      {label:'Cat_Posiciones', info:conteo(DATA_POSICIONES),            fn:()=>jsonpSend('Cat_Posiciones',DATA_POSICIONES)},
+      {label:'Cat_Direcciones',info:conteo(OFICINAS_DIR),               fn:()=>jsonpSend('Cat_Direcciones',OFICINAS_DIR)},
+      {label:'Cat_Actividades',info:conteo(ACTIVIDADES),                fn:()=>jsonpSend('Cat_Actividades',ACTIVIDADES)},
+      {label:'Cat_Prestaciones',info:conteo(PRESTACIONES_CONFIG),       fn:()=>jsonpSend('Cat_Prestaciones',PRESTACIONES_CONFIG)},
+      {label:'Cat_DocFiniq',   info:'',                                 fn:()=>jsonpSend('Cat_DocFiniq',  window.DOC_FINIQ_CONFIG||{})},
+      {label:'Cat_RegPatronal',info:conteo(DATA_REGISTROS_PATRONALES),  fn:()=>jsonpSend('Cat_RegPatronal',DATA_REGISTROS_PATRONALES)},
+      {label:'Cat_Salarios',   info:conteo(DATA_SALARIOS),              fn:()=>jsonpSend('Cat_Salarios',  DATA_SALARIOS)},
+    ];
+    if(svM.length > 0)      hojas.push({label:'SV_Folios',    info:conteo(svM), fn:()=>jsonpSend('SV_Folios',    svM)});
+    if(fmM.length > 0)      hojas.push({label:'Folios_Manual',info:conteo(fmM), fn:()=>jsonpSend('Folios_Manual',fmM)});
+    if(usuarios.length > 0) hojas.push({label:'Usuarios',     info:conteo(usuarios), fn:()=>jsonpSend('Usuarios',usuarios)});
+
+    const errores = [];
+    for(let i=0; i<hojas.length; i++){
+      const h = hojas[i];
+      showLoading('⬆ Subiendo ('+(i+1)+'/'+hojas.length+')', h.label+(h.info?' — '+h.info:'')+'...');
+      try{
+        await h.fn();
+      }catch(e){
+        errores.push(h.label+': '+e.message);
+        // Continuar con las demás hojas aunque una falle
+      }
+    }
+
+    setSyncStatus(errores.length===0?'ok':'error');
     hideLoading();
     render();
-    showToast('✓ Todo subido correctamente a Google Sheets');
+    if(errores.length===0){
+      showToast('✓ Todo subido correctamente a Google Sheets');
+    } else {
+      showToast('⚠ Subido con errores en: '+errores.join(', '),'#f59e0b');
+      console.error('Errores al subir:', errores);
+    }
   }catch(e){
     setSyncStatus('error');
     hideLoading();
