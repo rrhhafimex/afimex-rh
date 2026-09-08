@@ -167,7 +167,7 @@ input.field-ok { border-color: #16a34a; background: #f0fdf4; }
     <div style="display:flex;align-items:center;gap:12px">
       <div>
         <div class="topbar-title">AFIMEX PEOPLE</div>
-        <div class="topbar-sub">V 12.0.17 | Recursos Humanos</div>
+        <div class="topbar-sub">V 12.0.18 | Recursos Humanos</div>
       </div>
     </div>
     <div style="position:absolute;left:50%;transform:translateX(-50%)">
@@ -4856,6 +4856,24 @@ function loginSetTipo(tipo){
   if(err) err.style.display='none';
 }
 
+// v12.0.18: si la contraseña no coincide contra la copia local (afimex-usuarios en
+// localStorage), esa copia puede estar desactualizada porque el usuario o su
+// contraseña se modificaron desde OTRA computadora. Antes de rechazar el
+// acceso, se refresca una sola vez desde Google Sheets (fuente de verdad) y
+// se reintenta. Así nadie queda bloqueado por un caché local viejo, y ya no
+// hace falta entrar como admin en cada máquina para "reactivar" a alguien.
+async function buscarUsuarioEnNube(usuario, pass, rol){
+  if(!tieneGSheets()) return null;
+  try{
+    const usuariosRemoto = await getUsuariosRemoto();
+    if(usuariosRemoto && usuariosRemoto.length > 0){
+      localStorage.setItem('afimex-usuarios', JSON.stringify(usuariosRemoto));
+      return usuariosRemoto.find(u=>u.usuario && u.usuario.trim()===usuario.trim() && u.password===pass && u.rol===rol) || null;
+    }
+  }catch(e){}
+  return null;
+}
+
 async function loginEntrar(){
   const pass    = (document.getElementById('login-pass')||{}).value||'';
   const usuario = (document.getElementById('login-usuario')||{}).value||'';
@@ -4866,7 +4884,8 @@ async function loginEntrar(){
     if(usuario.trim()){
       let users = [];
       try{ users = await getUsuarios(); }catch(e){ users=[]; }
-      const found = users.find(u=>u.usuario && u.usuario.trim()===usuario.trim() && u.password===pass && u.rol==='admin');
+      let found = users.find(u=>u.usuario && u.usuario.trim()===usuario.trim() && u.password===pass && u.rol==='admin');
+      if(!found) found = await buscarUsuarioEnNube(usuario, pass, 'admin');
       if(found){
         currentRole='admin'; isAdmin=true;
         currentUser={nombre:found.nombre||found.usuario, usuario:found.usuario, rol:'admin'};
@@ -4889,11 +4908,12 @@ async function loginEntrar(){
   if(['generalista','reclutador','nominas','gerencia','admin'].includes(_loginTipo)){
     let users = [];
     try{ users = await getUsuarios(); }catch(e){ users=[]; }
-    const found = users.find(u =>
+    let found = users.find(u =>
       u.usuario && u.usuario.trim()===usuario.trim() &&
       u.password===pass &&
       u.rol===_loginTipo
     );
+    if(!found) found = await buscarUsuarioEnNube(usuario, pass, _loginTipo);
     if(found){
       currentRole=_loginTipo;
       isAdmin=(_loginTipo==='admin');
