@@ -167,7 +167,7 @@ input.field-ok { border-color: #16a34a; background: #f0fdf4; }
     <div style="display:flex;align-items:center;gap:12px">
       <div>
         <div class="topbar-title">AFIMEX PEOPLE</div>
-        <div class="topbar-sub">V 12.0.24 | Recursos Humanos</div>
+        <div class="topbar-sub">V 12.0.25 | Recursos Humanos</div>
       </div>
     </div>
     <div style="position:absolute;left:50%;transform:translateX(-50%)">
@@ -379,6 +379,68 @@ let currentTab='altas', currentType='semanal', isAdmin=false;
 let currentRole='generalista'; // 'generalista' | 'admin' | 'reclutador'
 let currentUser=null; // {nombre, usuario, rol} del usuario logueado
 let db=[], seguimientos=[], foliosData={}, bajaColaborador=null, finiquitosDB=[];
+
+// v12.0.25: REPARACIÓN DE FINIQUITOS ─────────────────────────────────────────
+// Al ir y volver de Google Sheets: (1) las fechas regresan como
+// "2026-08-13T06:00:00.000Z" y (2) los importes con decimales largos
+// (p.ej. 207.99999999999997) regresan sin punto decimal (20799999999999996).
+// Se normalizan fechas a AAAA-MM-DD y se recalculan percepciones, deducciones
+// y neto a partir de sus componentes (p19/p20/p24/p403, percs y deds).
+function _finNum(v){
+  if(typeof v==='number') return isFinite(v)?v:NaN;
+  if(v===null||v===undefined) return NaN;
+  const t=String(v).replace(/[$\s,]/g,'');
+  if(t==='') return NaN;
+  const n=Number(t); return isFinite(n)?n:NaN;
+}
+function _finFecha(v){
+  if(!v) return v;
+  if(v instanceof Date) v=v.toISOString();
+  v=String(v);
+  if(/^\d{4}-\d{2}-\d{2}T/.test(v)){
+    const d=new Date(v);
+    if(!isNaN(d)) return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+    return v.slice(0,10);
+  }
+  return v;
+}
+const _FIN_MAX = 5000000; // ningún finiquito razonable supera $5 M
+function _finOk(n){ return !isNaN(n) && n>=0 && n<_FIN_MAX; }
+function normalizarFiniquito(f){
+  if(!f||typeof f!=='object') return f;
+  const r={...f};
+  ['fechaIngreso','fechaBaja','fechaIniAño'].forEach(k=>{ if(r[k]) r[k]=_finFecha(r[k]); });
+  const r2=n=>+(+n).toFixed(2);
+  // Salarios
+  let sdBase=_finNum(r.sdBase), sdPres=_finNum(r.sdPres), sdComp=_finNum(r.sdComp);
+  if(!_finOk(sdPres)) sdPres = (_finOk(sdComp)&&_finOk(sdBase)) ? r2(sdComp-sdBase) : 0;
+  if(_finOk(sdBase)) r.sdBase=sdBase;
+  r.sdPres=sdPres;
+  if(_finOk(sdBase)) r.sdComp=r2(sdBase+sdPres);
+  // Deducciones: suma de los importes capturados
+  let deds=null; try{ deds=typeof r.deds==='string'?JSON.parse(r.deds||'[]'):(r.deds||[]); }catch(e){ deds=null; }
+  let sumaDeds=_finNum(r.sumaDeds);
+  if(Array.isArray(deds)) sumaDeds=deds.reduce((a,d)=>a+(_finNum(d&&d.importe)||0),0);
+  // Percepciones: p19 + p20 + p24 + p403 + conceptos adicionales × SD base
+  let percs=null; try{ percs=typeof r.percs==='string'?JSON.parse(r.percs||'[]'):(r.percs||[]); }catch(e){ percs=null; }
+  const comps=['p19val','p20val','p24val','p403'].map(k=>_finNum(r[k]));
+  let sumaPercs=_finNum(r.sumaPercs);
+  if(comps.every(_finOk) && Array.isArray(percs) && _finOk(sdBase)){
+    const adic=percs.reduce((a,px)=>{const fa=parseFloat(px&&px.factor);return a+(isNaN(fa)?0:fa)*sdBase;},0);
+    sumaPercs=comps.reduce((a,b)=>a+b,0)+adic;
+  }
+  let neto=_finNum(r.neto);
+  if(_finOk(sumaPercs)){
+    if(!_finOk(sumaDeds)) sumaDeds = _finOk(neto) ? Math.max(0,sumaPercs-neto) : 0;
+    neto=Math.max(0,sumaPercs-sumaDeds);
+  }
+  r.sumaPercs=_finOk(sumaPercs)?r2(sumaPercs):0;
+  r.sumaDeds =_finOk(sumaDeds)?r2(sumaDeds):0;
+  r.neto     =_finOk(neto)?r2(neto):0;
+  return r;
+}
+function normalizarFiniquitos(arr){ return Array.isArray(arr)?arr.map(normalizarFiniquito):arr; }
+
 let plantillaDB={}; // { "Monterrey": { "Auxiliar de Operaciones": { cupo: 12, asignados: [{ numNomina, nombre }] } } }
 let activosDB=[]; // Lista mutable de empleados activos del xlsx (se inicializa desde PLANTILLA_ACTIVOS_SEED)
 let _activosQ='', _activosOf='', _activosPu='', _baseQ='';
@@ -592,7 +654,7 @@ async function loadData(){
   try{const v=localStorage.getItem('afimex-db');if(v){const p=JSON.parse(v);if(Array.isArray(p))db=p;};}catch(e){db=[];}
   try{const v=localStorage.getItem('afimex-seguimientos');if(v)seguimientos=JSON.parse(v);}catch(e){seguimientos=[];}
   try{const v=localStorage.getItem('afimex-folios');if(v)foliosData=JSON.parse(v);}catch(e){foliosData={};}
-  try{const v=localStorage.getItem('afimex-finiquitos');if(v)finiquitosDB=JSON.parse(v);}catch(e){finiquitosDB=[];}
+  try{const v=localStorage.getItem('afimex-finiquitos');if(v){finiquitosDB=normalizarFiniquitos(JSON.parse(v));localStorage.setItem('afimex-finiquitos',JSON.stringify(finiquitosDB));}}catch(e){finiquitosDB=[];}
   try{const v=localStorage.getItem('afimex-plantilla');if(v)plantillaDB=JSON.parse(v);}catch(e){plantillaDB={};}
   try{const v=localStorage.getItem('afimex-activos');if(v)activosDB=JSON.parse(v);}catch(e){activosDB=[];}
   try{const v=localStorage.getItem('afimex-indicadores-nominas');if(v)indicadoresNominasDB=JSON.parse(v);}catch(e){indicadoresNominasDB={};}
@@ -611,7 +673,7 @@ async function loadData(){
         if(k && k.includes('finiquitos') && k!=='afimex-finiquitos'){
           const v=JSON.parse(localStorage.getItem(k)||'[]');
           if(Array.isArray(v)&&v.length>0){
-            finiquitosDB=v;
+            finiquitosDB=normalizarFiniquitos(v);
             localStorage.setItem('afimex-finiquitos',JSON.stringify(finiquitosDB));
             showToast('✓ Finiquitos recuperados de versión anterior ('+v.length+' registros)');
             break;
@@ -750,7 +812,7 @@ async function sincronizarDesdeGSheets(){
     if(fols && Object.keys(fols).length > 0){ foliosData = fols; localStorage.setItem('afimex-folios', JSON.stringify(foliosData)); }
 
     const fins = resultados['Finiquitos'];
-    if(fins && fins.length > 0){ finiquitosDB = fins; localStorage.setItem('afimex-finiquitos', JSON.stringify(finiquitosDB)); }
+    if(fins && fins.length > 0){ finiquitosDB = normalizarFiniquitos(fins); localStorage.setItem('afimex-finiquitos', JSON.stringify(finiquitosDB)); }
 
     const usrs = resultados['Usuarios'];
     if(usrs && usrs.length > 0){ localStorage.setItem('afimex-usuarios', JSON.stringify(usrs)); }
@@ -6264,8 +6326,8 @@ async function guardarFiniquito(){
     p20fac: _p20f, p20val: _p20,
     p24fac: _p24f, p24val: _p24,
     p403:   _p403,
-    sumaPercs,
-    sumaDeds,
+    sumaPercs: +sumaPercs.toFixed(2),
+    sumaDeds:  +sumaDeds.toFixed(2),
     neto:   +neto.toFixed(2),
     deds:   JSON.stringify(s.deds||[]),
     percs:  JSON.stringify(s.percs||[]),
@@ -6319,7 +6381,7 @@ function finiqHistorialHTML(){
     ? `<button onclick="finiqCargar('${id}',true)" style="background:#eef3fb;color:var(--afimex-blue);border:none;border-radius:4px;padding:3px 8px;cursor:pointer;font-size:11px;font-weight:600">📂 Cargar</button>`
     : `<button onclick="finiqCargar('${id}')" style="background:#eef3fb;color:var(--afimex-blue);border:none;border-radius:4px;padding:3px 8px;cursor:pointer;font-size:11px;font-weight:600">📂 Cargar</button>`;
   const fmtMXN=v=>'$'+Number(v||0).toLocaleString('es-MX',{minimumFractionDigits:2,maximumFractionDigits:2});
-  const fmtD=v=>v?(v.includes('-')?v.split('-').reverse().join('/'):v):'—';
+  const fmtD=v=>{v=_finFecha(v);return v?(String(v).includes('-')?String(v).split('-').reverse().join('/'):v):'—';};
   const fil=window._finiqFiltro||{};
 
   // Aplicar filtros
@@ -6440,7 +6502,7 @@ function finiqHistorialRefresh(){
 
   const fil=window._finiqFiltro||{};
   const fmtMXN=v=>'$'+Number(v||0).toLocaleString('es-MX',{minimumFractionDigits:2,maximumFractionDigits:2});
-  const fmtD=v=>v?(v.includes('-')?v.split('-').reverse().join('/'):v):'—';
+  const fmtD=v=>{v=_finFecha(v);return v?(String(v).includes('-')?String(v).split('-').reverse().join('/'):v):'—';};
 
   // Aplicar filtros
   let lista=[...finiquitosDB].sort((a,b)=>new Date(b.fechaRegistro)-new Date(a.fechaRegistro));
@@ -6621,7 +6683,7 @@ function finiqGenerarReporte(){
   const tipoLabels={separacion:'Separación Voluntaria',termino:'Término de Contrato',abandono:'Abandono de Trabajo'};
   const tipoIconos={separacion:'🤝',termino:'📄',abandono:'🚶'};
   const fmtMXN=v=>'$'+Number(v||0).toLocaleString('es-MX',{minimumFractionDigits:2,maximumFractionDigits:2});
-  const fmtD=v=>v?(v.includes('-')?v.split('-').reverse().join('/'):v):'—';
+  const fmtD=v=>{v=_finFecha(v);return v?(String(v).includes('-')?String(v).split('-').reverse().join('/'):v):'—';};
   const subtitulo=[
     desde&&hasta?`Periodo: ${fmtD(desde)} al ${fmtD(hasta)}`:desde?`Desde: ${fmtD(desde)}`:hasta?`Hasta: ${fmtD(hasta)}`:'Todas las fechas',
     tipo?`Tipo: ${tipoLabels[tipo]}`:'Todos los tipos',
@@ -6717,7 +6779,7 @@ function finiqImportar(){
       if(!arr.length){showToast('El archivo no contiene finiquitos válidos','#dc2626');return;}
       // Combinar: agregar solo los que no existen ya (por ID)
       const idsActuales=new Set(finiquitosDB.map(f=>f.id));
-      const nuevos=arr.filter(f=>!idsActuales.has(f.id));
+      const nuevos=normalizarFiniquitos(arr.filter(f=>!idsActuales.has(f.id)));
       finiquitosDB=[...finiquitosDB,...nuevos];
       await syncFiniquitos();
       render();
@@ -7530,7 +7592,7 @@ function printDocumentosFiniquito(){
   const ART=cfg.articuloLey||'fracción I del artículo 53 de la Ley Federal del Trabajo';
   const fmtMXN=v=>'$'+Number(v||0).toLocaleString('es-MX',{minimumFractionDigits:2,maximumFractionDigits:2});
   const fmtF=v=>Number(v||0).toFixed(2);
-  const fmtD=v=>v?(v.includes('-')?v.split('-').reverse().join('/'):v):'—';
+  const fmtD=v=>{v=_finFecha(v);return v?(String(v).includes('-')?String(v).split('-').reverse().join('/'):v):'—';};
   const SD_OPS={sd1:316,sd2:441};
   const sdL1=s.sdOpt==='sdOtro'?(parseFloat(s.sdOtro)||0):(SD_OPS[s.sdOpt]||316);
   const sdL2=parseFloat(s.sdPres)||0;
@@ -9553,7 +9615,7 @@ function penAgregarComentario(id){
             pendientesDB=datos; localStorage.setItem('afimex-pendientes',JSON.stringify(pendientesDB));
             if(JSON.stringify(pendientesDB)!==antes) huboCambios=true;
           } else if(hoja==='Finiquitos' && Array.isArray(datos) && datos.length>0){
-            finiquitosDB=datos; localStorage.setItem('afimex-finiquitos',JSON.stringify(finiquitosDB));
+            finiquitosDB=normalizarFiniquitos(datos); localStorage.setItem('afimex-finiquitos',JSON.stringify(finiquitosDB));
           } else if(hoja==='SV_Folios' && Array.isArray(datos) && datos.length>0){
             localStorage.setItem('afimex-sv-folios',JSON.stringify(datos));
           } else if(hoja==='Folios_Manual' && Array.isArray(datos) && datos.length>0){
