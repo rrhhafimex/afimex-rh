@@ -167,7 +167,7 @@ input.field-ok { border-color: #16a34a; background: #f0fdf4; }
     <div style="display:flex;align-items:center;gap:12px">
       <div>
         <div class="topbar-title">AFIMEX PEOPLE</div>
-        <div class="topbar-sub">V 12.0.18 | Recursos Humanos</div>
+        <div class="topbar-sub">V 12.0.24 | Recursos Humanos</div>
       </div>
     </div>
     <div style="position:absolute;left:50%;transform:translateX(-50%)">
@@ -188,7 +188,49 @@ input.field-ok { border-color: #16a34a; background: #f0fdf4; }
 
 <script>
 // ─── CONSTANTS ────────────────────────────────────────────────────────────────
-const ADMIN_PASS = '1006';
+// v12.0.22: USUARIOS FIJOS EN EL CÓDIGO ─────────────────────────────────────
+// El login funciona aunque Google Sheets falle. Las contraseñas NO están en
+// texto plano: se guarda una huella PBKDF2-SHA256 (150,000 iteraciones,
+// sal = 'afimex|'+usuario). Estos usuarios tienen prioridad sobre los de la
+// nube/localStorage con el mismo nombre de usuario.
+// Para actualizar esta lista: Usuarios → "🔒 Generar bloque para código".
+const HASH_ITER = 150000;
+const ADMIN_PASS_H = 'ae89f6f14086ce371408ca2c1862d31eec19798cbaffe7b4107013fa15cb98f3'; // contraseña maestra (sin usuario)
+const USUARIOS_FIJOS = [
+  {"nombre": "Cecilia Guadalupe Velazquez Inguanzo", "usuario": "cecilia.velazquez", "rol": "generalista", "h": "db319e3e1775bc4c5a64c9f7c698d61132965aa0fa30aaba5ae635c4f0b1e1ae"},
+  {"nombre": "ADRIAN GASCA ESCUDERO", "usuario": "adrian.gasca", "rol": "reclutador", "h": "087e4e134c7fca25e63e93ee867deeae4222c9cadff06483d400cd83a9cd6e9a"},
+  {"nombre": "YADIRA RAMIREZ GUZMAN", "usuario": "yadira.guzman", "rol": "gerencia", "h": "a07756f0e5c94b117f6591b9267ea9fffccfe0991c9cea3f308b0dc8cb330dbf"},
+  {"nombre": "JOSE ALBERTO MAGALLANES SALAS", "usuario": "jose.magallanes", "rol": "nominas", "h": "4295b57d566eca85b00c6d55bc748ffea21a190949bcbd6d01f220df4e5f48d9"},
+  {"nombre": "LUIS DAVID RUIZ DIAZ", "usuario": "david.ruiz", "rol": "reclutador", "h": "8ada82f4d42b265f771d79c3b9d169a2749271b620c7ada0c97a4e206547ddb0"},
+  {"nombre": "JOSE DE JESUS NUÑEZ LOPEZ", "usuario": "jose.nuñez", "rol": "reclutador", "h": "e4128948ca32db3f096bc3eb286c4f6200068b1bfc4b6aa3ad318872fd257f1a"},
+  {"nombre": "MONTSERRAT GONZALEZ LOZANO", "usuario": "montserrat.gonzalez", "rol": "gerencia", "h": "430f06efeef888ae45d8b97ae19e572112650251457ac5ad9357b8162136fc96"},
+  {"nombre": "JONATAN CHAVEZ FLORES", "usuario": "jonatan.chavez", "rol": "admin", "h": "c9fd823a8ecd52c787bff2642e3661d2c018c1d07834d9864612ce30d9164ba3"},
+  {"nombre": "MARIANA KARINA MATA RUIZ", "usuario": "mariana.mata", "rol": "reclutador", "h": "b1abf2bec6c82e352b528afd5f96eaa239b1769cf943a94cddbd4345a061c275"},
+  {"nombre": "BRAYAN DE JESUS CEPEDA LUNA", "usuario": "brayan.cepeda", "rol": "nominas", "h": "6c24d92af3de65604322a5188d344c1e0ed5f08b08f1f1b75ca00525f4586a43"}
+];
+function normUsuario(u){ return String(u||'').trim().toLowerCase().normalize('NFC'); }
+async function hashPass(salt, pass){
+  const enc = new TextEncoder();
+  const key = await crypto.subtle.importKey('raw', enc.encode(String(pass)), 'PBKDF2', false, ['deriveBits']);
+  const bits = await crypto.subtle.deriveBits({name:'PBKDF2', hash:'SHA-256', salt:enc.encode('afimex|'+salt), iterations:HASH_ITER}, key, 256);
+  return Array.from(new Uint8Array(bits)).map(b=>b.toString(16).padStart(2,'0')).join('');
+}
+function getUsuarioFijo(usuario){ const n=normUsuario(usuario); return n ? USUARIOS_FIJOS.find(u=>u.usuario===n)||null : null; }
+async function verificarUsuarioFijo(usuario, pass){
+  const f = getUsuarioFijo(usuario);
+  if(!f || !pass) return null;
+  try{ return (await hashPass(f.usuario, String(pass).trim())) === f.h ? f : null; }catch(e){ return null; }
+}
+async function verificarPassMaestra(pass){
+  if(!pass) return false;
+  try{ return (await hashPass('__maestra__', String(pass).trim())) === ADMIN_PASS_H; }catch(e){ return false; }
+}
+// Lista fusionada: fijos + almacenados cuyo usuario no esté en los fijos
+function fusionarUsuarios(almacenados){
+  const fijosSet = new Set(USUARIOS_FIJOS.map(u=>u.usuario));
+  const resto = (almacenados||[]).filter(u=>u && !fijosSet.has(normUsuario(u.usuario)));
+  return USUARIOS_FIJOS.map(u=>({nombre:u.nombre, usuario:u.usuario, rol:u.rol, fijo:true, creado:'En código'})).concat(resto);
+}
 const GENERALISTA_PASS = 'rh2024';
 const TABS_REC = ['altas','seguimiento','docs','pendientes']; // Pestañas reclutador
 const TABS_NOM = ['base','baja','finiquitos','incapacidades','pendientes']; // Pestañas nóminas
@@ -470,7 +512,7 @@ function jsonpSend(sheet, data){
 async function gsCall(action, data){
   if(action === 'saveAll'){
     const c = data.catalogos || {};
-    const usuarios = await getUsuarios();
+    const usuarios = await getUsuariosParaNube();
 
     // Enviar secuencialmente para evitar colisiones de callbacks JSONP
     await jsonpSend('Expedientes',      data.db);
@@ -593,7 +635,7 @@ async function loadData(){
   if(!tieneGSheets()){ setSyncStatus('local'); return; }
   setSyncStatus('ok');
   // Si no hay usuarios locales, siempre intentar recuperarlos de la nube
-  const usuariosLocales = await getUsuarios();
+  const usuariosLocales = await getUsuariosAlmacenados();
   if(usuariosLocales.length === 0){
     try{
       const usuariosRemoto = await getUsuariosRemoto();
@@ -892,7 +934,7 @@ async function subirTodoANube(){
   if(!confirm('⬆ Subir todo a Google Sheets\n\n¿Continuar?')) return;
   try{
     setSyncStatus('saving');
-    const usuarios = await getUsuarios();
+    const usuarios = await getUsuariosParaNube();
     const svM = JSON.parse(localStorage.getItem('afimex-sv-folios')||'[]');
     const fmM = JSON.parse(localStorage.getItem('afimex-folios-manual')||'[]');
 
@@ -1143,7 +1185,7 @@ function mostrarModalAdmin(){
   mostrarLoginInicial();
 }
 
-function verificarAdmin(){const p=document.getElementById('modal-pass')?.value;if(p===ADMIN_PASS){isAdmin=true;cerrarModal();renderNav();showToast('Bienvenido, Admin');}else{const e=document.getElementById('modal-error');if(e){e.style.display='block';document.getElementById('modal-pass').value='';}};}
+async function verificarAdmin(){const p=document.getElementById('modal-pass')?.value;if(await verificarPassMaestra(p)){isAdmin=true;cerrarModal();renderNav();showToast('Bienvenido, Admin');}else{const e=document.getElementById('modal-error');if(e){e.style.display='block';document.getElementById('modal-pass').value='';}};}
 function cerrarModal(){document.querySelectorAll('.modal-overlay').forEach(function(m){m.remove();});}
 function cerrarSesionAdmin(){cerrarSesion();}
 function showTab(tab){
@@ -1656,7 +1698,7 @@ function printAlta(r){
       </div>
       <div style="text-align:right;">
         <div style="font-size:10pt; font-weight:700; color:#1A5FA8;">INTEGRACIÓN DE EXPEDIENTE</div>
-        <div style="font-size:7.5pt; color:#666; margin-top:2px;">AFX-FR275-RH &nbsp;·&nbsp; V2.1</div>
+        <div style="font-size:7.5pt; color:#666; margin-top:2px;">AFX-FR275-RH &nbsp;·&nbsp; V2.2</div>
       </div>
     </div>
 
@@ -1728,6 +1770,16 @@ function printAlta(r){
         <div style="background:#475569; color:white; font-weight:700; font-size:8pt; padding:4px 8px; border-radius:3px 3px 0 0; text-transform:uppercase; letter-spacing:.4px;">Políticas y Documentos Adicionales</div>
         <table style="width:100%; border-collapse:collapse; border:1px solid #e2e8f0;">
           ${['Código de Vestimenta','Responsiva de Operadores','Carta de no Tráfico a Inmigrantes','Aviso de Privacidad','Acuse de Reglamento Interior de Trabajo','Carta bloqueo MeLi (Si aplica)','Convenio de Confidencialidad','Política de Seguridad','Código de ética'].map((d,i)=>`
+          <tr style="background:${i%2===0?'white':'#f8fafc'}">
+            <td style="padding:3px 7px; border-bottom:1px solid #f1f5f9; font-size:7.5pt;">${d}</td>
+            <td style="width:32px; border-bottom:1px solid #f1f5f9; border-left:1px solid #e2e8f0; text-align:center; font-size:8pt; color:#aaa;">☐</td>
+          </tr>`).join('')}
+        </table>
+
+        <!-- v12.0.23: Auxiliar de Nóminas — movimientos del alta -->
+        <div style="background:#16a34a; color:white; font-weight:700; font-size:8pt; padding:4px 8px; border-radius:3px 3px 0 0; text-transform:uppercase; letter-spacing:.4px; margin-top:10px;">Auxiliar de Nóminas</div>
+        <table style="width:100%; border-collapse:collapse; border:1px solid #e2e8f0;">
+          ${['Alta en IMSS','Acuse de IMSS','Alta en WORKBEAT','Cargar fotografía en WORKBEAT','Cargar expediente digital en WORKBEAT','Asignar horario','Asignar oficina para registrar asistencia','Alta en CPTRACK','Alta en registro y seguimiento de movimientos IMSS','Alta en tabulador'].map((d,i)=>`
           <tr style="background:${i%2===0?'white':'#f8fafc'}">
             <td style="padding:3px 7px; border-bottom:1px solid #f1f5f9; font-size:7.5pt;">${d}</td>
             <td style="width:32px; border-bottom:1px solid #f1f5f9; border-left:1px solid #e2e8f0; text-align:center; font-size:8pt; color:#aaa;">☐</td>
@@ -4759,8 +4811,17 @@ function docsRefreshButtons(r){
 
 // ─── GESTIÓN DE USUARIOS ──────────────────────────────────────────────────────
 
-async function getUsuarios(){
+async function getUsuariosAlmacenados(){
   try{ const v=localStorage.getItem('afimex-usuarios'); return v?JSON.parse(v):[]; }catch(e){ return []; }
+}
+// v12.0.22: devuelve fijos (código) + almacenados, con prioridad a los fijos
+async function getUsuarios(){
+  return fusionarUsuarios(await getUsuariosAlmacenados());
+}
+// Lo que se sube a la nube: sólo los que NO están fijos en el código
+async function getUsuariosParaNube(){
+  const fijosSet = new Set(USUARIOS_FIJOS.map(u=>u.usuario));
+  return (await getUsuariosAlmacenados()).filter(u=>u && !u.fijo && !fijosSet.has(normUsuario(u.usuario)));
 }
 async function getUsuariosRemoto(){
   // Cargar usuarios desde GSheets via JSONP
@@ -4777,7 +4838,9 @@ async function getUsuariosRemoto(){
   });
 }
 async function saveUsuarios(users){
-  if(!users || users.length === 0) return; // nunca guardar lista vacía
+  const fijosSet = new Set(USUARIOS_FIJOS.map(u=>u.usuario));
+  users = (users||[]).filter(u=>u && !u.fijo && !fijosSet.has(normUsuario(u.usuario)));
+  if(users.length === 0){ localStorage.setItem('afimex-usuarios','[]'); return; } // no mandar lista vacía a la nube
   localStorage.setItem('afimex-usuarios', JSON.stringify(users));
   if(tieneGSheets()) await jsonpSend('Usuarios', users);
 }
@@ -4879,6 +4942,26 @@ async function loginEntrar(){
   const usuario = (document.getElementById('login-usuario')||{}).value||'';
   const err     = document.getElementById('login-error');
 
+  // v12.0.22: 1) usuarios fijos en el código (no dependen de la nube).
+  // Entran con SU rol aunque se haya elegido otro botón.
+  if(usuario.trim()){
+    const fijo = await verificarUsuarioFijo(usuario, pass);
+    if(fijo){
+      currentRole=fijo.rol; isAdmin=(fijo.rol==='admin');
+      currentUser={nombre:fijo.nombre, usuario:fijo.usuario, rol:fijo.rol};
+      const _tabsMapF={generalista:TABS_GEN,reclutador:TABS_REC,nominas:TABS_NOM,gerencia:TABS_GER,admin:TABS_ADM};
+      const _allowedF=_tabsMapF[fijo.rol]||TABS_GEN;
+      if(!_allowedF.includes(currentTab)) currentTab=_allowedF[0];
+      renderNav(); render();
+      return;
+    }
+    // Usuario fijo con contraseña incorrecta: no se consulta la nube
+    if(getUsuarioFijo(usuario)){
+      if(err){ err.textContent='Usuario o contraseña incorrectos'; err.style.display='block'; }
+      return;
+    }
+  }
+
   if(_loginTipo === 'admin'){
     // Si ingresó usuario, buscar en la lista de usuarios registrados con rol admin
     if(usuario.trim()){
@@ -4895,7 +4978,7 @@ async function loginEntrar(){
       }
     }
     // Sin usuario: contraseña maestra
-    if(!usuario.trim() && pass === ADMIN_PASS){
+    if(!usuario.trim() && await verificarPassMaestra(pass)){
       currentRole='admin'; isAdmin=true; currentUser={nombre:'Jonatan Chavez Flores',rol:'admin'};
       renderNav(); render();
       return;
@@ -4946,7 +5029,10 @@ async function usuariosHTML(){
         <h2 style="font-size:16px;font-weight:700;color:var(--afimex-blue)">Gestión de Usuarios</h2>
         <div style="font-size:12px;color:var(--text2);margin-top:2px">Usuarios del sistema</div>
       </div>
-      <button class="btn btn-primary" onclick="modalNuevoUsuario()">+ Nuevo Usuario</button>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-secondary" onclick="generarBloqueUsuariosFijos()" title="Genera el bloque USUARIOS_FIJOS para pegar en el código">🔒 Generar bloque para código</button>
+        <button class="btn btn-primary" onclick="modalNuevoUsuario()">+ Nuevo Usuario</button>
+      </div>
     </div>
     ${recs.length===0 ? `
     <div style="text-align:center;padding:40px;color:var(--text2);background:white;border-radius:var(--radius);border:1px solid var(--border)">
@@ -4976,8 +5062,9 @@ async function usuariosHTML(){
             <td style="padding:10px 14px;color:var(--text2)">${u.usuario}</td>
             <td style="padding:10px 14px;color:var(--text2)">${u.creado||'—'}</td>
             <td style="padding:10px 14px;text-align:center;display:flex;gap:6px;justify-content:center">
+              ${u.fijo ? `<span title="Guardado en el código. Para cambiarlo se requiere una nueva versión." style="font-size:11px;color:var(--text2);background:var(--bg2);border:1px solid var(--border);padding:3px 10px;border-radius:99px">🔒 En código</span>` : `
               <button onclick="modalEditarUsuario('${u.usuario}')" class="btn btn-sm" style="font-size:11px;padding:3px 10px">✏️ Editar</button>
-              <button onclick="eliminarUsuario('${u.usuario}')" class="btn btn-sm" style="font-size:11px;padding:3px 10px;background:#fee2e2;color:#dc2626;border-color:#fca5a5">🗑 Eliminar</button>
+              <button onclick="eliminarUsuario('${u.usuario}')" class="btn btn-sm" style="font-size:11px;padding:3px 10px;background:#fee2e2;color:#dc2626;border-color:#fca5a5">🗑 Eliminar</button>`}
             </td>
           </tr>`;}).join('')}
         </tbody>
@@ -5115,6 +5202,35 @@ async function guardarEditarUsuario(usuario){
     showToast('✓ Usuario actualizado');
     render();
   }
+}
+
+
+// v12.0.22: genera el bloque USUARIOS_FIJOS (fijos actuales + usuarios de la
+// nube/locales con contraseña) para pegarlo en el código y publicar versión.
+async function generarBloqueUsuariosFijos(){
+  if(!isAdmin){ showToast('Sólo el administrador','#dc2626'); return; }
+  showToast('Generando bloque…','#1A5FA8');
+  const lista = USUARIOS_FIJOS.map(u=>({...u}));
+  const extra = await getUsuariosParaNube();
+  for(const u of extra){
+    if(!u.usuario || !u.password) continue;
+    const n = normUsuario(u.usuario);
+    lista.push({nombre:u.nombre||u.usuario, usuario:n, rol:u.rol, h: await hashPass(n, String(u.password).trim())});
+  }
+  const txt = 'const USUARIOS_FIJOS = [\n' + lista.map(u=>'  '+JSON.stringify({nombre:u.nombre,usuario:u.usuario,rol:u.rol,h:u.h})).join(',\n') + '\n];';
+  document.getElementById('main-content').insertAdjacentHTML('beforebegin',`
+  <div class="modal-overlay" id="modal-bloque-usuarios">
+    <div class="modal-box" style="max-width:760px">
+      <div class="modal-title">🔒 Bloque USUARIOS_FIJOS (${lista.length} usuarios)</div>
+      <div style="font-size:12px;color:var(--text2);margin-bottom:8px">Reemplaza el bloque <b>const USUARIOS_FIJOS = [...]</b> en el index.html, sube la versión y publica. Las contraseñas van cifradas.</div>
+      <textarea id="bloque-usuarios-txt" readonly style="width:100%;height:280px;font-family:monospace;font-size:11px;padding:8px;border:1px solid var(--border);border-radius:var(--radius-sm)"></textarea>
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:10px">
+        <button class="btn btn-secondary" onclick="cerrarModal()">Cerrar</button>
+        <button class="btn btn-primary" onclick="(function(){const t=document.getElementById('bloque-usuarios-txt');t.select();try{navigator.clipboard.writeText(t.value);}catch(e){document.execCommand('copy');}showToast('✓ Copiado');})()">📋 Copiar</button>
+      </div>
+    </div>
+  </div>`);
+  document.getElementById('bloque-usuarios-txt').value = txt;
 }
 
 async function eliminarUsuario(usuario){
@@ -9091,7 +9207,7 @@ function _penModalAbrir(datos){
   // Obtener usuarios disponibles del sistema
   const usuariosList = (function(){
     try{
-      const us=JSON.parse(localStorage.getItem('afimex-usuarios')||'[]');
+      const us=fusionarUsuarios(JSON.parse(localStorage.getItem('afimex-usuarios')||'[]'));
       return us.map(u=>u.nombre||u.usuario).filter(Boolean).sort();
     }catch(e){ return []; }
   })();
