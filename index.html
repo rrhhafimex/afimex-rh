@@ -167,7 +167,7 @@ input.field-ok { border-color: #16a34a; background: #f0fdf4; }
     <div style="display:flex;align-items:center;gap:12px">
       <div>
         <div class="topbar-title">AFIMEX PEOPLE</div>
-        <div class="topbar-sub">V 12.0.28 | Recursos Humanos</div>
+        <div class="topbar-sub">V 12.0.29 | Recursos Humanos</div>
       </div>
     </div>
     <div style="position:absolute;left:50%;transform:translateX(-50%)">
@@ -441,6 +441,148 @@ function normalizarFiniquito(f){
 }
 function normalizarFiniquitos(arr){ return Array.isArray(arr)?arr.map(normalizarFiniquito):arr; }
 
+// v12.0.29: EXPEDIENTES — normalización, fusión con la nube y subida en cola ──
+const _CAMPOS_TEXTO_NUM = ['nss','cp','cpFiscal','telefono','telefonoEmergencia','clabe','cuenta'];
+function normalizarExpediente(r){
+  if(!r || typeof r!=='object') return r;
+  const o={...r};
+  _CAMPOS_TEXTO_NUM.forEach(k=>{
+    if(o[k]===null||o[k]===undefined||o[k]==='') return;
+    let v=String(o[k]).trim();
+    if(/^'\d+$/.test(v)) v=v.slice(1);         // apóstrofo usado para forzar texto en Sheets
+    o[k]=v;
+  });
+  if(/^\d{1,10}$/.test(o.nss||''))  o.nss=String(o.nss).padStart(11,'0');   // NSS: 11 dígitos
+  ['cp','cpFiscal'].forEach(k=>{ if(/^\d{1,4}$/.test(o[k]||'')) o[k]=String(o[k]).padStart(5,'0'); });
+  return o;
+}
+// Al subir: los números con 0 inicial o de más de 15 dígitos van como texto
+function prepararExpParaNube(arr){
+  return (arr||[]).map(r=>{
+    if(!r||typeof r!=='object') return r;
+    const o={...r};
+    _CAMPOS_TEXTO_NUM.forEach(k=>{ const v=o[k]; if(typeof v==='string' && /^\d+$/.test(v) && (v[0]==='0'||v.length>15)) o[k]="'"+v; });
+    return o;
+  });
+}
+function _hash(str){ let h=0x811c9dc5; for(let i=0;i<str.length;i++){ h^=str.charCodeAt(i); h=Math.imul(h,0x01000193); } return (h>>>0).toString(36); }
+const _SEG_VACIO = ()=>({s1:false,s2:false,s3:false,comentario:'',estatus:'activo'});
+function _claves(lista){
+  const cnt={};
+  return lista.map(r=>{ const b=(parseInt(r&&r.numNomina)||0)+'|'+String((r&&r.fechaIngreso)||'')+'|'+String((r&&r.nombre)||'').trim().toUpperCase(); cnt[b]=(cnt[b]||0)+1; return b+'#'+cnt[b]; });
+}
+function _huellas(lista, segs){ const ks=_claves(lista); const m={}; ks.forEach((k,i)=>{ m[k]=_hash(JSON.stringify(lista[i])+'§'+JSON.stringify((segs||[])[i]||null)); }); return m; }
+function _getBase(){
+  try{ const v=localStorage.getItem('afimex-db-base'); if(v) return JSON.parse(v); }catch(e){}
+  const b=_huellas(db, seguimientos); _setBase(b); return b;   // primera vez: lo local se toma como sincronizado
+}
+function _setBase(b){ try{ localStorage.setItem('afimex-db-base', JSON.stringify(b)); }catch(e){} }
+// ¿Hay cambios locales que no han llegado a la nube?
+function hayCambiosSinSubir(){
+  const base=_getBase(), act=_huellas(db, seguimientos);
+  for(const k in act) if(base[k]!==act[k]) return true;
+  for(const k in base) if(!(k in act)) return true;
+  return false;
+}
+// Fusiona la nube con lo local: lo que cambió aquí (altas, ediciones, bajas,
+// borrados) se conserva; lo demás se toma de la nube.
+function fusionarExpedientes(nubeExp, nubeSeg){
+  nubeExp=(nubeExp||[]).map(normalizarExpediente);
+  nubeSeg=Array.isArray(nubeSeg)?nubeSeg:[];
+  const base=_getBase();
+  const kLoc=_claves(db), hLoc=_huellas(db, seguimientos);
+  const cambiados={}; kLoc.forEach((k,i)=>{ if(base[k]!==hLoc[k]) cambiados[k]=i; });
+  const borrados=new Set(Object.keys(base).filter(k=>!(k in hLoc)));
+  const kNube=_claves(nubeExp);
+  const nDb=[], nSeg=[], usados=new Set();
+  kNube.forEach((k,i)=>{
+    if(borrados.has(k)) return;
+    if(k in cambiados){ const j=cambiados[k]; nDb.push(db[j]); nSeg.push(seguimientos[j]||_SEG_VACIO()); usados.add(k); }
+    else { nDb.push(nubeExp[i]); nSeg.push(nubeSeg[i]||_SEG_VACIO()); }
+  });
+  Object.keys(cambiados).forEach(k=>{ if(!usados.has(k)){ const j=cambiados[k]; nDb.push(db[j]); nSeg.push(seguimientos[j]||_SEG_VACIO()); } });
+  db=nDb; seguimientos=nSeg;
+  _setBase(_huellas(nubeExp, nubeExp.map((_,i)=>nubeSeg[i]||_SEG_VACIO())));
+  localStorage.setItem('afimex-db', JSON.stringify(db));
+  localStorage.setItem('afimex-seguimientos', JSON.stringify(seguimientos));
+}
+// Descarga rápida de expedientes + seguimientos (con límite de tiempo)
+async function refrescarExpedientesRapido(ms){
+  if(!tieneGSheets()) return false;
+  const [e,sg]=await Promise.all([_gsLoadSheet('Expedientes', ms), _gsLoadSheet('Seguimiento', ms)]);
+  if(!Array.isArray(e) || e.length===0 || !Array.isArray(sg)) return false;
+  fusionarExpedientes(e, sg);
+  return true;
+}
+// Subida en cola (una a la vez). Devuelve true si llegó a la nube.
+window._subiendo = 0;
+let _colaSubida = Promise.resolve(true);
+function subirExpedientes(){
+  _colaSubida = _colaSubida.then(async ()=>{
+    localStorage.setItem('afimex-db', JSON.stringify(db));
+    localStorage.setItem('afimex-seguimientos', JSON.stringify(seguimientos));
+    if(!tieneGSheets()){ setSyncStatus('local'); return false; }
+    const snapDb=JSON.parse(JSON.stringify(db)), snapSeg=JSON.parse(JSON.stringify(seguimientos));
+    window._subiendo++; setSyncStatus('saving');
+    try{
+      await jsonpSend('Expedientes', prepararExpParaNube(snapDb));
+      await jsonpSend('Seguimiento', snapSeg);
+      _setBase(_huellas(snapDb, snapSeg));
+      setSyncStatus('ok'); return true;
+    }catch(e){ setSyncStatus('error'); return false; }
+    finally{ window._subiendo--; }
+  }).catch(()=>false);
+  return _colaSubida;
+}
+window.addEventListener('beforeunload', function(ev){
+  if(window._subiendo>0){ ev.preventDefault(); ev.returnValue='Se están subiendo cambios a Drive. Si cierras ahora quedarán solo en esta computadora.'; return ev.returnValue; }
+});
+
+// Ventana de autorización con clave de administrador
+function pedirAutorizacionNomina(mensaje, sugerido){
+  return new Promise(resolve=>{
+    document.getElementById('modal-aut-nom')?.remove();
+    const ov=document.createElement('div');
+    ov.id='modal-aut-nom';
+    ov.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:9500;display:flex;align-items:center;justify-content:center;padding:20px';
+    ov.innerHTML=`<div style="background:white;border-radius:12px;max-width:440px;width:100%;padding:22px;box-shadow:0 8px 40px rgba(0,0,0,.25)">
+      <div style="font-size:15px;font-weight:700;color:var(--afimex-blue);margin-bottom:8px">🔐 Número de nómina</div>
+      <div style="font-size:13px;color:var(--text1);margin-bottom:14px;line-height:1.45">${mensaje}</div>
+      <label style="font-size:11px;font-weight:600;color:var(--text2)">Clave de administrador</label>
+      <input id="aut-nom-pass" type="password" autocomplete="off" style="width:100%;padding:8px 10px;border:1.5px solid var(--border);border-radius:6px;font-size:13px;margin:4px 0 6px">
+      <div id="aut-nom-err" style="color:#dc2626;font-size:12px;min-height:16px"></div>
+      <div style="display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;margin-top:6px">
+        <button id="aut-nom-cancel" class="btn btn-secondary">Cancelar</button>
+        ${sugerido?`<button id="aut-nom-sug" class="btn btn-secondary">Usar el #${sugerido}</button>`:''}
+        <button id="aut-nom-ok" class="btn btn-primary">Autorizar</button>
+      </div></div>`;
+    document.body.appendChild(ov);
+    const fin=v=>{ ov.remove(); resolve(v); };
+    ov.querySelector('#aut-nom-cancel').onclick=()=>fin(null);
+    const sb=ov.querySelector('#aut-nom-sug'); if(sb) sb.onclick=()=>fin('sugerido');
+    const ok=async ()=>{
+      const p=ov.querySelector('#aut-nom-pass').value;
+      if(await verificarPassMaestra(p)) fin('autorizado');
+      else { ov.querySelector('#aut-nom-err').textContent='Clave incorrecta'; ov.querySelector('#aut-nom-pass').value=''; }
+    };
+    ov.querySelector('#aut-nom-ok').onclick=ok;
+    ov.querySelector('#aut-nom-pass').onkeydown=e=>{ if(e.key==='Enter') ok(); };
+    setTimeout(()=>ov.querySelector('#aut-nom-pass').focus(),50);
+  });
+}
+// Convierte cualquier fecha guardada al formato que aceptan los campos de fecha
+function aFechaInput(v){
+  if(!v) return '';
+  if(v instanceof Date) v=v.toISOString();
+  v=String(v).trim();
+  if(/^\d{4}-\d{2}-\d{2}$/.test(v)) return v;
+  if(/^\d{4}-\d{2}-\d{2}T/.test(v)){ const f=_isoAFecha(v); if(/^\d{4}-\d{2}-\d{2}$/.test(f)) return f; const d=new Date(v); if(!isNaN(d)) return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
+  let m=v.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{4})$/);
+  if(m) return m[3]+'-'+m[2].padStart(2,'0')+'-'+m[1].padStart(2,'0');
+  return '';
+}
+
+
 // v12.0.26: FECHAS QUE REGRESAN DE GOOGLE SHEETS ─────────────────────────────
 // Sheets convierte "2026-06-22" en fecha y la devuelve como
 // "2026-06-22T06:00:00.000Z" (medianoche de México en UTC). Se regresa a
@@ -610,7 +752,7 @@ async function gsCall(action, data){
     const usuarios = await getUsuariosParaNube();
 
     // Enviar secuencialmente para evitar colisiones de callbacks JSONP
-    await jsonpSend('Expedientes',      data.db);
+    await jsonpSend('Expedientes',      prepararExpParaNube(data.db));
     await jsonpSend('Seguimiento',      data.seguimientos);
     await jsonpSend('Folios',           data.folios);
     await jsonpSend('Finiquitos',       data.finiquitos);
@@ -684,7 +826,7 @@ function hideLoading(){
 // ── CARGAR datos (Google Sheets → local) ────────────────────────
 async function loadData(){
   // Cargar desde localStorage
-  try{const v=localStorage.getItem('afimex-db');if(v){const p=JSON.parse(v);if(Array.isArray(p))db=p;};}catch(e){db=[];}
+  try{const v=localStorage.getItem('afimex-db');if(v){const p=JSON.parse(v);if(Array.isArray(p))db=p.map(normalizarExpediente);};}catch(e){db=[];}
   try{const v=localStorage.getItem('afimex-seguimientos');if(v)seguimientos=JSON.parse(v);}catch(e){seguimientos=[];}
   try{const v=localStorage.getItem('afimex-folios');if(v)foliosData=JSON.parse(v);}catch(e){foliosData={};}
   try{const v=localStorage.getItem('afimex-finiquitos');if(v){finiquitosDB=normalizarFiniquitos(JSON.parse(v));localStorage.setItem('afimex-finiquitos',JSON.stringify(finiquitosDB));}}catch(e){finiquitosDB=[];}
@@ -794,13 +936,16 @@ async function subirCatalogosANube(){
   }
 }
 
+// v12.0.29: reemplaza las llamadas a GS_URL (variable que no existía)
+async function _gsGetData(sheet, ms){ const d = await _gsLoadSheet(sheet, ms||10000); return {[sheet]: d}; }
+
 // ── CARGA MANUAL desde Google Sheets ───────────────────────────
-async function _gsLoadSheet(sheet){
+async function _gsLoadSheet(sheet, ms){
   // Carga una sola hoja via JSONP — respuestas pequeñas, nunca se cortan
   return new Promise((resolve)=>{
     const cb = 'gsLS_'+Date.now()+'_'+Math.random().toString(36).slice(2,5);
-    const t = setTimeout(()=>{ delete window[cb]; resolve(null); }, 20000);
-    window[cb] = (r)=>{ clearTimeout(t); delete window[cb]; resolve(r && r.ok ? normalizarFechasISO(r.data) : null); };
+    const t = setTimeout(()=>{ delete window[cb]; resolve(null); }, ms||20000);
+    window[cb] = (r)=>{ clearTimeout(t); delete window[cb]; let d = r && r.ok ? normalizarFechasISO(r.data) : null; if(sheet==='Expedientes' && Array.isArray(d)) d = d.map(normalizarExpediente); resolve(d); };
     const s = document.createElement('script');
     s.src = APPS_SCRIPT_URL+'?action=loadSheet&sheet='+encodeURIComponent(sheet)+'&callback='+cb;
     s.onerror = ()=>{ clearTimeout(t); delete window[cb]; resolve(null); };
@@ -836,10 +981,9 @@ async function sincronizarDesdeGSheets(){
 
     // ── Aplicar operativos ──
     const expd = resultados['Expedientes'];
-    if(expd && Array.isArray(expd) && expd.length > 0){ db = expd; localStorage.setItem('afimex-db', JSON.stringify(db)); }
-
     const segs = resultados['Seguimiento'];
-    if(segs && segs.length > 0){ seguimientos = segs; localStorage.setItem('afimex-seguimientos', JSON.stringify(seguimientos)); }
+    // v12.0.29: fusionar en lugar de reemplazar (no se pierden cambios locales sin subir)
+    if(expd && Array.isArray(expd) && expd.length > 0){ fusionarExpedientes(expd, Array.isArray(segs)?segs:[]); if(hayCambiosSinSubir()) subirExpedientes(); }
 
     const fols = resultados['Folios'];
     if(fols && Object.keys(fols).length > 0){ foliosData = fols; localStorage.setItem('afimex-folios', JSON.stringify(foliosData)); }
@@ -941,7 +1085,7 @@ async function syncExpedientes(){
   localStorage.setItem('afimex-db', JSON.stringify(db));
   if(!tieneGSheets()){ setSyncStatus('local'); return; }
   setSyncStatus('saving');
-  try{ await jsonpSend('Expedientes', db); setSyncStatus('ok'); }catch(e){ setSyncStatus('error'); }
+  try{ await jsonpSend('Expedientes', prepararExpParaNube(db)); setSyncStatus('ok'); }catch(e){ setSyncStatus('error'); }
 }
 
 async function syncSeguimientos(){
@@ -992,16 +1136,8 @@ async function syncActivos(){
 }
 
 // Alias compatibles con llamadas existentes
-async function saveDB(){
-  localStorage.setItem('afimex-db', JSON.stringify(db));
-  await syncExpedientes();
-  localStorage.setItem('afimex-seguimientos', JSON.stringify(seguimientos));
-  await syncSeguimientos();
-}
-async function saveSeg(){
-  localStorage.setItem('afimex-seguimientos', JSON.stringify(seguimientos));
-  await syncSeguimientos();
-}
+async function saveDB(){ return await subirExpedientes(); }   // v12.0.29: expedientes + seguimientos en una sola cola
+async function saveSeg(){ return await subirExpedientes(); }
 async function saveFolios(){
   localStorage.setItem('afimex-folios', JSON.stringify(foliosData));
   await syncFolios();
@@ -1015,7 +1151,7 @@ async function syncAll(){
   if(!tieneGSheets()){ setSyncStatus('local'); return; }
   setSyncStatus('saving');
   try{
-    await jsonpSend('Expedientes', db);
+    await jsonpSend('Expedientes', prepararExpParaNube(db));
     await jsonpSend('Seguimiento', seguimientos);
     await jsonpSend('Folios',      foliosData);
     await jsonpSend('Finiquitos',  finiquitosDB);
@@ -1041,7 +1177,7 @@ async function subirTodoANube(){
     }
 
     const hojas = [
-      {label:'Expedientes',    info:conteo(db),                        fn:()=>jsonpSend('Expedientes',   db)},
+      {label:'Expedientes',    info:conteo(db),                        fn:()=>jsonpSend('Expedientes',   prepararExpParaNube(db))},
       {label:'Seguimiento',    info:conteo(seguimientos),               fn:()=>jsonpSend('Seguimiento',   seguimientos)},
       {label:'Folios',         info:conteo(foliosData),                 fn:()=>jsonpSend('Folios',        foliosData)},
       {label:'Finiquitos',     info:conteo(finiquitosDB),               fn:()=>jsonpSend('Finiquitos',    finiquitosDB)},
@@ -1191,29 +1327,22 @@ async function folioAgregarManual(){
   render();
   showToast(`✓ Folio generado: ${folio}`);
 }
-function siguienteNomina(){const usados=new Set(db.map(r=>parseInt(r.numNomina)));let n=3000;while(usados.has(n))n++;return n;}
-function validarNomina(val){const n=parseInt(val);if(!val||isNaN(n))return{ok:false,msg:'Ingresa un número de nómina válido'};if(db.some(r=>parseInt(r.numNomina)===n))return{ok:false,msg:'# '+n+' ya está registrado'};return{ok:true,msg:'Disponible ✓'};}
+// v12.0.29: siguiente = número más alto registrado + 1 (expedientes, finiquitos y la nube)
+function maxNominaRegistrada(){
+  let m=0;
+  (db||[]).forEach(r=>{ const n=parseInt(r&&r.numNomina); if(n>m) m=n; });
+  (finiquitosDB||[]).forEach(f=>{ const n=parseInt(f&&f.numNomina); if(n>m) m=n; });
+  if(window._nomMaxNube>m) m=window._nomMaxNube;
+  return m;
+}
+function siguienteNomina(){ const m=maxNominaRegistrada(); return m>0 ? m+1 : 3000; }
+function validarNomina(val){const n=parseInt(val);if(!val||isNaN(n))return{ok:false,msg:'Ingresa un número de nómina válido'};if(db.some(r=>parseInt(r.numNomina)===n))return{ok:false,msg:'# '+n+' ya está registrado — reingreso requiere clave de admin'};if(n!==siguienteNomina())return{ok:true,msg:'⚠ El siguiente es #'+siguienteNomina()+' — otro número requiere clave de admin'};return{ok:true,msg:'Disponible ✓'};}
 async function refreshNumNomina(){
+  // v12.0.29: consulta la nube solo para conocer el número más alto (no reemplaza la base local)
   if(!tieneGSheets()||nomInput) return;
-  const inp=document.getElementById('nom-input');
-  const msg=document.getElementById('nom-msg');
-  if(!inp) return;
   try{
-    const data=await new Promise((res,rej)=>{
-      const cb='_cb_nom_'+Date.now();
-      const sc=document.createElement('script');
-      sc.src=GS_URL+'?action=getData&sheets=Expedientes&callback='+cb;
-      window[cb]=d=>{delete window[cb];sc.remove();res(normalizarFechasISO(d));};
-      sc.onerror=()=>{delete window[cb];sc.remove();rej(new Error('net'));};
-      setTimeout(()=>{delete window[cb];sc.remove();rej(new Error('timeout'));},10000);
-      document.head.appendChild(sc);
-    });
-    if(data&&data.Expedientes&&Array.isArray(data.Expedientes)&&data.Expedientes.length>0){
-      if(data.Expedientes.length>=db.length){
-        db=data.Expedientes;
-        localStorage.setItem('afimex-db',JSON.stringify(db));
-      }
-    }
+    const exps=await _gsLoadSheet('Expedientes', 8000);
+    if(Array.isArray(exps)){ let m=0; exps.forEach(r=>{ const n=parseInt(r&&r.numNomina); if(n>m) m=n; }); window._nomMaxNube=m; }
   }catch(e){}
   if(nomInput) return;
   const sig=siguienteNomina();
@@ -2923,7 +3052,7 @@ ${historial.length===0
 
 function baseHTML(){
   // ── Sub-pestaña activa ──────────────────────────────────────────
-  const subTab = window._baseTab || 'altas';
+  let subTab = window._baseTab || 'altas';
 
   const stBtn = (id, label) => {
     const active = subTab === id;
@@ -3287,15 +3416,7 @@ function bajaOnTipoChange(val){
         let svFolios=JSON.parse(localStorage.getItem('afimex-sv-folios')||'[]');
         if(tieneGSheets()){
           try{
-            const d=await new Promise((res,rej)=>{
-              const cb='_cb_svf_'+Date.now();
-              const sc=document.createElement('script');
-              sc.src=GS_URL+'?action=getData&sheets=SV_Folios&callback='+cb;
-              window[cb]=r=>{delete window[cb];sc.remove();res(r);};
-              sc.onerror=()=>{delete window[cb];sc.remove();rej();};
-              setTimeout(()=>{delete window[cb];sc.remove();rej();},8000);
-              document.head.appendChild(sc);
-            });
+            const d=await _gsGetData('SV_Folios');
             if(d&&d.SV_Folios&&Array.isArray(d.SV_Folios)&&d.SV_Folios.length>0){
               svFolios=d.SV_Folios;
               localStorage.setItem('afimex-sv-folios',JSON.stringify(svFolios));
@@ -3501,12 +3622,31 @@ async function guardarAlta(e){
     return;
   }
 
-  // ── Validar nómina ──────────────────────────────────────────────────────
+  // ── Validar nómina (v12.0.29) ──────────────────────────────────────────
   var nomVal = String(v('numNominaManual')||nomInput||'').trim();
   var nomManual = parseInt(nomVal);
   if(!nomVal||isNaN(nomManual)){ showToast('Ingresa el número de nómina','#dc2626'); return; }
-  var vNom=validarNomina(String(nomManual));
-  if(!vNom.ok){ showToast(vNom.msg||'Número de nómina ya registrado','#dc2626'); return; }
+  if(window._guardando){ showToast('Ya se está guardando, espera un momento…','#d97706'); return; }
+  window._guardando = true;
+  try{
+    // Descarga rápida de la nube (máx. 5 s) para validar contra lo último registrado
+    showToast('Verificando número de nómina…','#1A5FA8');
+    var _fresco = false;
+    try{ _fresco = await refrescarExpedientesRapido(5000); }catch(_e){ _fresco=false; }
+    if(!_fresco && tieneGSheets()) showToast('⚠ No se pudo confirmar con Drive; se valida con los datos de esta computadora','#d97706');
+    var _sig = siguienteNomina();
+    var _dup = db.find(function(r){ return parseInt(r.numNomina)===nomManual; });
+    if(_dup || nomManual!==_sig){
+      var _msg = _dup
+        ? 'El <b>#'+nomManual+'</b> ya está registrado a nombre de <b>'+(_dup.nombre||'—')+'</b>.<br>Si es un <b>reingreso</b>, autoriza con la clave de administrador.'
+        : 'El siguiente número disponible es el <b>#'+_sig+'</b>.<br>Para usar el <b>#'+nomManual+'</b> se requiere la clave de administrador.';
+      var _res = (currentRole==='admin' && !_dup) ? 'autorizado' : await pedirAutorizacionNomina(_msg, _sig);
+      if(!_res){ return; }
+      if(_res==='sugerido'){ nomManual=_sig; nomInput=String(_sig); var _ni=document.getElementById('nom-input'); if(_ni) _ni.value=String(_sig); }
+    }
+  } finally {
+    window._guardando = false;
+  }
 
   // ── Validar NSS ─────────────────────────────────────────────────────────
   try {
@@ -3553,12 +3693,18 @@ async function guardarAlta(e){
     seguimientos.push({s1:false,s2:false,s3:false,comentario:'',estatus:'activo'});
     // ── Asignar automáticamente en plantilla si existe la posición ──
     plantillaAsignarEmpleado(data.oficina, data.puesto, data.numNomina, data.nombre);
-    await saveDB();
-    await saveSeg();
-    lastSaved = db[db.length-1];
+    // v12.0.29: se imprime SIEMPRE el expediente capturado aquí (antes se tomaba
+    // "el último de la lista", que podía ser el de otra persona tras una sincronización)
+    lastSaved = data;
+    localStorage.setItem('afimex-db', JSON.stringify(db));
+    localStorage.setItem('afimex-seguimientos', JSON.stringify(seguimientos));
     nomInput=''; nssInput='';
-    showToast('✓ Expediente #'+nomManual+' guardado correctamente');
+    showToast('✓ Expediente #'+nomManual+' guardado — subiendo a Drive en segundo plano');
     mostrarConfirmacion(nomManual, currentType);
+    // Subida en segundo plano: imprimir no espera a Drive
+    subirExpedientes().then(function(ok){
+      showToast(ok ? '✓ Expediente #'+nomManual+' guardado en Drive' : '⚠ #'+nomManual+' quedó en esta computadora; se reintentará subir automáticamente', ok?'#16a34a':'#d97706');
+    });
   } catch(err) {
     showToast('Error al guardar: '+err.message,'#dc2626');
     console.error('guardarAlta error:',err);
@@ -3577,15 +3723,7 @@ async function guardarBaja(){
     // Descargar folios actualizados desde GSheets antes de generar el siguiente
     if(tieneGSheets()){
       try{
-        const fData = await new Promise((res,rej)=>{
-          const cb='_cb_folio_'+Date.now();
-          const sc=document.createElement('script');
-          sc.src=GS_URL+'?action=getData&sheets=Folios&callback='+cb;
-          window[cb]=d=>{delete window[cb];sc.remove();res(normalizarFechasISO(d));};
-          sc.onerror=()=>{delete window[cb];sc.remove();rej();};
-          setTimeout(()=>{delete window[cb];sc.remove();rej();},8000);
-          document.head.appendChild(sc);
-        });
+        const fData = await _gsGetData('Folios');
         if(fData&&fData.Folios&&typeof fData.Folios==='object'){
           Object.entries(fData.Folios).forEach(([iata,n])=>{
             if(!foliosData[iata]||n>foliosData[iata]) foliosData[iata]=n;
@@ -3673,7 +3811,7 @@ function abrirEditar(idx){
 
   const chk = (name,val,lista) => `<input type="checkbox" name="${name}" value="${val}" ${lista.includes(val)?'checked':''} style="width:16px;height:16px;cursor:pointer">`;
   const sel = (name, opts, val) => `<select name="${name}" style="border:1px solid var(--border2);border-radius:var(--radius-sm);padding:6px 10px;font-size:13px;width:100%">${opts.map(o=>`<option value="${o}"${val===o?' selected':''}>${o}</option>`).join('')}</select>`;
-  const inp = (name, val='', extra='') => `<input name="${name}" value="${(String(val||'')).replace(/"/g,'&quot;')}" ${extra} style="border:1px solid var(--border2);border-radius:var(--radius-sm);padding:6px 10px;font-size:13px;width:100%">`;
+  const inp = (name, val='', extra='') => { if(/type="date"/.test(extra)) val=aFechaInput(val); return `<input name="${name}" value="${(String(val||'')).replace(/"/g,'&quot;')}" ${extra} style="border:1px solid var(--border2);border-radius:var(--radius-sm);padding:6px 10px;font-size:13px;width:100%">`; };
 
   const overlay = document.createElement('div');
   overlay.id = 'editar-overlay';
@@ -3831,11 +3969,17 @@ async function guardarEditar(){
 
   const r = db[idx];
 
-  // Validar y actualizar número de nómina
+  // Validar y actualizar número de nómina (v12.0.29: cambiarlo requiere clave de admin)
   const nuevoNom = parseInt(fd.get('numNomina'));
-  if(!isNaN(nuevoNom) && nuevoNom > 0){
+  if(!isNaN(nuevoNom) && nuevoNom > 0 && nuevoNom !== parseInt(r.numNomina)){
     const duplicado = db.find((x,i)=>i!==idx && parseInt(x.numNomina)===nuevoNom);
-    if(duplicado){ showToast('⛔ El # '+nuevoNom+' ya está registrado en otro expediente','#dc2626'); return; }
+    if(currentRole!=='admin' || duplicado){
+      const msg = duplicado
+        ? 'El <b>#'+nuevoNom+'</b> ya está registrado a nombre de <b>'+(duplicado.nombre||'—')+'</b>. Para asignarlo también a este expediente autoriza con la clave de administrador.'
+        : 'Cambiar el número de nómina de <b>#'+r.numNomina+'</b> a <b>#'+nuevoNom+'</b> requiere la clave de administrador.';
+      const res = await pedirAutorizacionNomina(msg, null);
+      if(res!=='autorizado') return;
+    }
     r.numNomina = nuevoNom;
   }
 
@@ -3847,7 +3991,14 @@ async function guardarEditar(){
     'benNombre','benDireccion','benFechaNac','benParentesco','benPorcentaje',
     'hijoNombre1','hijoFechaNac1','hijoNombre2','hijoFechaNac2',
     'hijoNombre3','hijoFechaNac3','hijoNombre4','hijoFechaNac4'];
-  campos.forEach(c=>{ const v=fd.get(c); if(v!==null) r[c]=v.trim(); });
+  // v12.0.29: una fecha que no se pudo leer (campo vacío al abrir) no se borra
+  const _camposFecha = ['fechaNac','fechaIngreso','benFechaNac','hijoFechaNac1','hijoFechaNac2','hijoFechaNac3','hijoFechaNac4'];
+  campos.forEach(c=>{
+    const v=fd.get(c); if(v===null) return;
+    const t=v.trim();
+    if(_camposFecha.includes(c) && t==='' && r[c] && aFechaInput(r[c])==='') return;
+    r[c]=t;
+  });
 
   // Reconstruir diasLaborales y horario
   const dias = ['Lun','Mar','Mie','Jue','Vie','Sab','Dom'];
@@ -3878,7 +4029,8 @@ async function guardarEditar(){
   document.body.appendChild(saving);
 
   try{
-    await saveDB();
+    const _ok = await saveDB();
+    if(!_ok) throw new Error('sin conexión');
     saving.style.background = '#16a34a';
     saving.innerHTML = '✓ Cambios guardados correctamente';
     setTimeout(()=>{ saving.style.opacity='0'; setTimeout(()=>saving.remove(),300); }, 2000);
@@ -4723,6 +4875,7 @@ function _ctrFilas(){
           <button style="${bs}" onclick="printAdendum(db[${i}])">🖨 Adendum</button>`
         : `<button style="${bs}" onclick="printContratoSemanal(db[${i}])">🖨 Contrato</button>`}
           <button style="${bs};background:var(--afimex-blue);color:white;border-color:var(--afimex-blue)" onclick="printAlta(db[${i}])">🖨 Alta</button>
+          <button style="${bs};background:#f5f3ff;color:#7c3aed;border-color:#ddd6fe" onclick="abrirEditar(${i})">✏️ Editar</button>
       </td>
     </tr>`).join('');
 }
@@ -4739,7 +4892,7 @@ function docsSecContratos(){
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
       <div>
         <div style="font-size:14px;font-weight:700;color:var(--afimex-blue)">Reimprimir Alta y Contrato</div>
-        <div style="font-size:12px;color:var(--text2);margin-top:2px">Todos los expedientes · <b>Alta</b> imprime alta, etiqueta y checklist de expediente; el contrato se imprime con su propio botón</div>
+        <div style="font-size:12px;color:var(--text2);margin-top:2px">Todos los expedientes · <b>Alta</b> imprime alta, etiqueta y checklist · <b>Editar</b> corrige datos antes de reimprimir</div>
       </div>
       <span id="ctr-count" style="font-size:12px;color:var(--text2);font-weight:600"></span>
     </div>
@@ -4773,6 +4926,9 @@ function docsSecContratos(){
 
 // ── Print: Políticas ─────────────────────────────────────────────
 function printPoliticas(r, politicas){
+  if(typeof POL_PDF_MAP==='undefined' || typeof PDF_POLITICAS==='undefined'){
+    showToast('⚠ Los PDF de las políticas no están cargados en esta versión del sistema','#dc2626'); return;
+  }
   if(!r){ showToast('Selecciona un colaborador primero','#dc2626'); return; }
   if(!politicas || politicas.length===0){ showToast('Selecciona al menos una política','#dc2626'); return; }
 
@@ -6347,6 +6503,7 @@ async function configGuardar(){
     setSyncStatus('saving');
     try{
       await jsonpSend('Cat_Nominas',      DATA_NOMINAS);
+      localStorage.removeItem('afimex-catnom-pend');
       await jsonpSend('Cat_IATA',         IATA_MAP);
       await jsonpSend('Cat_Puestos',      PUESTOS_POR_OFICINA);
       await jsonpSend('Cat_Posiciones',   DATA_POSICIONES);
@@ -8155,15 +8312,33 @@ function configEditarNomina(i){
     {key:'periodo', label:'Periodo', type:'select', value:r.periodo, options:['SEMANA','QUINCENA']},
     {key:'puesto',  label:'Puesto',  type:'select', value:r.puesto, options:puestosLista},
     {key:'clavePos',label:'Clave de Posición', value:r.clavePos||''},
-    {key:'sd',  label:'Salario Diario (SD)', type:'select', value:String(r.sd), options:DATA_SALARIOS.map(function(s){return String(s.sd);})},
-    {key:'sbc', label:'SBC',                  type:'select', value:String(r.sbc), options:DATA_SALARIOS.map(function(s){return String(s.sbc);})},
+    {key:'sd',  label:'Salario Diario (SD)', type:'select', value:String(r.sd), options:[...new Set([String(r.sd)].concat(DATA_SALARIOS.map(function(s){return String(s.sd);})))]},
+    {key:'sbc', label:'SBC',                  type:'select', value:String(r.sbc), options:[...new Set([String(r.sbc)].concat(DATA_SALARIOS.map(function(s){return String(s.sbc);})))]},
     {key:'salNeto', label:'Salario Neto',         type:'number', value:r.salNeto},
     {key:'rp',      label:'Registro Patronal',    type:'select', value:r.rp, options:rpLista},
     {key:'zona',    label:'Zona', type:'select', value:r.zona, options:['A','B','C']},
   ], vals=>{
-    DATA_NOMINAS[i] = {...r, ...vals, clavePos:(vals.clavePos||'').trim().toUpperCase(), oficina, sd:parseFloat(vals.sd)||0, sbc:parseFloat(vals.sbc)||0, salNeto:parseFloat(vals.salNeto)||0};
+    DATA_NOMINAS[i] = {...r, ...vals, clavePos:(vals.clavePos||'').trim().toUpperCase(), oficina, sd:parseFloat(vals.sd)||0, sbc:parseFloat(vals.sbc)||0, salNeto:+(parseFloat(vals.salNeto)||0).toFixed(2)};
+    // v12.0.29: se guarda al momento (antes solo quedaba en pantalla hasta "Guardar cambios")
+    localStorage.setItem('afimex-config-nominas', JSON.stringify(DATA_NOMINAS));
+    localStorage.setItem('afimex-catnom-pend','1');
+    subirCatNominas();
     render();
   });
+}
+
+// v12.0.29: sube solo el catálogo de nóminas; mientras no llegue, el auto-sync no lo sobrescribe
+let _subiendoCatNom = false;
+async function subirCatNominas(){
+  if(_subiendoCatNom || !tieneGSheets()) return;
+  _subiendoCatNom = true;
+  try{
+    await jsonpSend('Cat_Nominas', DATA_NOMINAS);
+    localStorage.removeItem('afimex-catnom-pend');
+    showToast('✓ Catálogo de nóminas guardado en Drive');
+  }catch(e){
+    showToast('⚠ Catálogo guardado en esta computadora; se reintentará subir a Drive','#d97706');
+  }finally{ _subiendoCatNom = false; }
 }
 
 // Editar Oficina / IATA
@@ -8949,15 +9124,7 @@ async function sincronizarPendientesAhora(){
     if(tieneGSheets()) await jsonpSend('Pendientes', pendientesDB);
     // 2. Descargar pendientes de la nube y fusionar
     if(tieneGSheets()){
-      const remoto = await new Promise((res,rej)=>{
-        const cb='_cb_pen_'+Date.now();
-        const sc=document.createElement('script');
-        sc.src=GS_URL+'?action=getData&sheets=Pendientes&callback='+cb;
-        window[cb]=d=>{delete window[cb];sc.remove();res(normalizarFechasISO(d));};
-        sc.onerror=()=>{delete window[cb];sc.remove();rej();};
-        setTimeout(()=>{delete window[cb];sc.remove();rej();},10000);
-        document.head.appendChild(sc);
-      });
+      const remoto = await _gsGetData('Pendientes');
       if(remoto&&Array.isArray(remoto.Pendientes)&&remoto.Pendientes.length>0){
         // Fusionar: los remotos prevalecen por ID, agregar nuevos que no existen local
         const localMap = new Map(pendientesDB.map(p=>[p.id,p]));
@@ -9724,19 +9891,24 @@ function penAgregarComentario(id){
   if(tieneGSheets()){
     const AUTOSYNC_HOJAS = ['Expedientes','Seguimiento','Incapacidades','Pendientes','Finiquitos','SV_Folios','Folios_Manual','Folios','Plantilla','Activos','Cat_Puestos','Cat_Nominas','Cat_Actividades'];
     async function autoSyncBackground(){
+      // v12.0.29: no sincronizar mientras alguien guarda o se está subiendo algo
+      if(window._guardando || window._subiendo>0) return;
       try{
         let huboCambios = false;
         for(const hoja of AUTOSYNC_HOJAS){
           const datos = await _gsLoadSheet(hoja);
           if(!datos) continue;
+          if(window._guardando || window._subiendo>0) return;
           if(hoja==='Expedientes' && Array.isArray(datos) && datos.length>0){
-            const antes=JSON.stringify(db);
-            db=datos; localStorage.setItem('afimex-db',JSON.stringify(db));
-            if(JSON.stringify(db)!==antes) huboCambios=true;
-          } else if(hoja==='Seguimiento' && Array.isArray(datos) && datos.length>0){
-            const antes=JSON.stringify(seguimientos);
-            seguimientos=datos; localStorage.setItem('afimex-seguimientos',JSON.stringify(seguimientos));
-            if(JSON.stringify(seguimientos)!==antes) huboCambios=true;
+            const segN = await _gsLoadSheet('Seguimiento');
+            if(window._guardando || window._subiendo>0) return;
+            if(Array.isArray(segN)){
+              const antes=JSON.stringify(db)+JSON.stringify(seguimientos);
+              fusionarExpedientes(datos, segN);
+              if(JSON.stringify(db)+JSON.stringify(seguimientos)!==antes) huboCambios=true;
+            }
+          } else if(hoja==='Seguimiento'){
+            // se procesa junto con Expedientes
           } else if(hoja==='Incapacidades' && Array.isArray(datos) && datos.length>0){
             const antes=JSON.stringify(incapacidadesDB);
             incapacidadesDB=datos; localStorage.setItem('afimex-incapacidades',JSON.stringify(incapacidadesDB));
@@ -9766,7 +9938,7 @@ function penAgregarComentario(id){
             Object.assign(PUESTOS_POR_OFICINA, datos);
             localStorage.setItem('afimex-config-puestos', JSON.stringify(PUESTOS_POR_OFICINA));
             if(JSON.stringify(PUESTOS_POR_OFICINA)!==antesP) huboCambios=true;
-          } else if(hoja==='Cat_Nominas' && Array.isArray(datos) && datos.length>0){
+          } else if(hoja==='Cat_Nominas' && Array.isArray(datos) && datos.length>0 && localStorage.getItem('afimex-catnom-pend')!=='1'){
             const antesN = JSON.stringify(DATA_NOMINAS);
             // Reemplazar completamente — Drive es la fuente de verdad
             DATA_NOMINAS.splice(0, DATA_NOMINAS.length, ...datos);
@@ -9780,9 +9952,14 @@ function penAgregarComentario(id){
             if(JSON.stringify(ACTIVIDADES)!==antesA) huboCambios=true;
           }
         }
+        // v12.0.29: reintentar subir cambios locales que no llegaron a la nube
+        if(hayCambiosSinSubir()) subirExpedientes();
+        if(localStorage.getItem('afimex-catnom-pend')==='1') subirCatNominas();
         if(huboCambios){
           // Re-renderizar pestaña activa si hubo cambios en datos relevantes
-          try{ render(); }catch(e){}
+          // (no en Alta ni con una ventana de edición abierta, para no borrar lo que se está capturando)
+          const _capturando = currentTab==='altas' || document.getElementById('editar-overlay') || document.getElementById('modal-aut-nom');
+          if(!_capturando){ try{ render(); }catch(e){} }
           showToast('🔄 Datos actualizados desde la nube','#1A5FA8');
         }
         setSyncStatus('ok');
