@@ -167,7 +167,7 @@ input.field-ok { border-color: #16a34a; background: #f0fdf4; }
     <div style="display:flex;align-items:center;gap:12px">
       <div>
         <div class="topbar-title">AFIMEX PEOPLE</div>
-        <div class="topbar-sub">V 12.0.25 | Recursos Humanos</div>
+        <div class="topbar-sub">V 12.0.27 | Recursos Humanos</div>
       </div>
     </div>
     <div style="position:absolute;left:50%;transform:translateX(-50%)">
@@ -441,6 +441,39 @@ function normalizarFiniquito(f){
 }
 function normalizarFiniquitos(arr){ return Array.isArray(arr)?arr.map(normalizarFiniquito):arr; }
 
+// v12.0.26: FECHAS QUE REGRESAN DE GOOGLE SHEETS ─────────────────────────────
+// Sheets convierte "2026-06-22" en fecha y la devuelve como
+// "2026-06-22T06:00:00.000Z" (medianoche de México en UTC). Se regresa a
+// AAAA-MM-DD en todos los datos (expedientes, seguimientos, incapacidades,
+// pendientes, finiquitos…). Las marcas de tiempo reales (con hora) no se tocan.
+const _ISO_RX = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?Z$/;
+function _isoAFecha(v){
+  const d=new Date(v); if(isNaN(d)) return v;
+  if(d.getHours()===0 && d.getMinutes()===0 && d.getSeconds()===0)
+    return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+  if(/T0[56]:00:00(\.000)?Z$/.test(v)) return v.slice(0,10);
+  return v;
+}
+function normalizarFechasISO(x){
+  if(typeof x==='string') return _ISO_RX.test(x)?_isoAFecha(x):x;
+  if(Array.isArray(x)) return x.map(normalizarFechasISO);
+  if(x && typeof x==='object' && Object.getPrototypeOf(x)===Object.prototype){
+    const o={}; for(const k in x) o[k]=normalizarFechasISO(x[k]); return o;
+  }
+  return x;
+}
+// Reparar lo que ya está guardado en esta computadora
+(function(){
+  ['afimex-db','afimex-seguimientos','afimex-incapacidades','afimex-pendientes','afimex-finiquitos','afimex-sv-folios','afimex-folios-manual','afimex-folios'].forEach(k=>{
+    try{
+      const v=localStorage.getItem(k); if(!v || v.indexOf('T0')<0) return;
+      const n=JSON.stringify(normalizarFechasISO(JSON.parse(v)));
+      if(n!==v) localStorage.setItem(k,n);
+    }catch(e){}
+  });
+})();
+
+
 let plantillaDB={}; // { "Monterrey": { "Auxiliar de Operaciones": { cupo: 12, asignados: [{ numNomina, nombre }] } } }
 let activosDB=[]; // Lista mutable de empleados activos del xlsx (se inicializa desde PLANTILLA_ACTIVOS_SEED)
 let _activosQ='', _activosOf='', _activosPu='', _baseQ='';
@@ -602,7 +635,7 @@ async function gsCall(action, data){
     return new Promise((resolve) => {
       const cbName = 'gsCb_' + Date.now();
       const t = setTimeout(() => { delete window[cbName]; resolve({ ok: false, error: 'timeout' }); }, 45000); // v12.0.15: aumentado 20s→45s para hojas grandes
-      window[cbName] = (r) => { clearTimeout(t); delete window[cbName]; resolve(r); };
+      window[cbName] = (r) => { clearTimeout(t); delete window[cbName]; resolve(normalizarFechasISO(r)); };
       const s = document.createElement('script');
       s.src = APPS_SCRIPT_URL + '?action=' + encodeURIComponent(action) + '&callback=' + cbName;
       s.onerror = () => { clearTimeout(t); delete window[cbName]; resolve({ ok: false, error: 'network' }); };
@@ -767,7 +800,7 @@ async function _gsLoadSheet(sheet){
   return new Promise((resolve)=>{
     const cb = 'gsLS_'+Date.now()+'_'+Math.random().toString(36).slice(2,5);
     const t = setTimeout(()=>{ delete window[cb]; resolve(null); }, 20000);
-    window[cb] = (r)=>{ clearTimeout(t); delete window[cb]; resolve(r && r.ok ? r.data : null); };
+    window[cb] = (r)=>{ clearTimeout(t); delete window[cb]; resolve(r && r.ok ? normalizarFechasISO(r.data) : null); };
     const s = document.createElement('script');
     s.src = APPS_SCRIPT_URL+'?action=loadSheet&sheet='+encodeURIComponent(sheet)+'&callback='+cb;
     s.onerror = ()=>{ clearTimeout(t); delete window[cb]; resolve(null); };
@@ -1170,7 +1203,7 @@ async function refreshNumNomina(){
       const cb='_cb_nom_'+Date.now();
       const sc=document.createElement('script');
       sc.src=GS_URL+'?action=getData&sheets=Expedientes&callback='+cb;
-      window[cb]=d=>{delete window[cb];sc.remove();res(d);};
+      window[cb]=d=>{delete window[cb];sc.remove();res(normalizarFechasISO(d));};
       sc.onerror=()=>{delete window[cb];sc.remove();rej(new Error('net'));};
       setTimeout(()=>{delete window[cb];sc.remove();rej(new Error('timeout'));},10000);
       document.head.appendChild(sc);
@@ -3548,7 +3581,7 @@ async function guardarBaja(){
           const cb='_cb_folio_'+Date.now();
           const sc=document.createElement('script');
           sc.src=GS_URL+'?action=getData&sheets=Folios&callback='+cb;
-          window[cb]=d=>{delete window[cb];sc.remove();res(d);};
+          window[cb]=d=>{delete window[cb];sc.remove();res(normalizarFechasISO(d));};
           sc.onerror=()=>{delete window[cb];sc.remove();rej();};
           setTimeout(()=>{delete window[cb];sc.remove();rej();},8000);
           document.head.appendChild(sc);
@@ -4481,7 +4514,8 @@ function docsHTML(){
   const secciones = [
     {id:'politicas', label:'📄 Políticas para Firma'},
     {id:'gafete',    label:'🪪 Gafete'},
-    {id:'reimpresion', label:'🖨 Reimprimir Alta'},
+    {id:'reimpresion', label:'🖨 Reimprimir Alta y Contrato'},
+    {id:'contratos', label:'📑 Contratos'},
   ];
 
   return `
@@ -4512,6 +4546,7 @@ function docsHTML(){
     ${activeSection==='politicas' ? docsSecPoliticas(sel) : ''}
     ${activeSection==='gafete'    ? docsSecGafete(sel)    : ''}
     ${activeSection==='reimpresion' ? docsSecReimpresion(sel) : ''}
+    ${activeSection==='contratos' ? docsSecContratos() : ''}
   </div>`;
 }
 
@@ -4620,16 +4655,25 @@ function docsSecGafete(r){
 // ── Sección: Reimprimir Alta ─────────────────────────────────────
 function docsSecReimpresion(r){
   return `
-  <div style="background:white;border:1px solid var(--border);border-radius:var(--radius);padding:18px">
+  <div id="docs-sec-reimpresion" style="background:white;border:1px solid var(--border);border-radius:var(--radius);padding:18px">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
       <div>
-        <div style="font-size:14px;font-weight:700;color:var(--afimex-blue)">Reimprimir Alta de Expediente</div>
-        <div style="font-size:12px;color:var(--text2);margin-top:2px">Genera el documento de alta para un colaborador existente</div>
+        <div style="font-size:14px;font-weight:700;color:var(--afimex-blue)">Reimprimir Alta y Contrato</div>
+        <div style="font-size:12px;color:var(--text2);margin-top:2px">Genera el alta, la etiqueta, el checklist de expediente y el contrato de un colaborador existente</div>
       </div>
       <button id="docs-btn-reimpresion"
         onclick="if(window._docsSelected){printAlta(window._docsSelected);}else{showToast('Selecciona un colaborador primero','#dc2626');}"
         class="btn btn-blue" ${r?'':'disabled style="opacity:.4"'}>🖨 Imprimir Alta</button>
     </div>
+    ${r ? `
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px;padding:10px 12px;border:1px dashed var(--border);border-radius:var(--radius-sm)">
+      <span style="font-size:12px;font-weight:700;color:var(--text2);margin-right:4px">CONTRATO:</span>
+      ${r.tipo==='temporal' ? `
+        <button class="btn btn-secondary btn-sm" onclick="printContratoTemporal(window._docsSelected)">🖨 Contrato Temporal</button>
+        <button class="btn btn-secondary btn-sm" onclick="printSolicitudTD(window._docsSelected)">🖨 Solicitud TD</button>
+        <button class="btn btn-secondary btn-sm" onclick="printAdendum(window._docsSelected)">🖨 Adendum / Prórroga</button>`
+      : `<button class="btn btn-secondary btn-sm" onclick="printContratoSemanal(window._docsSelected)">🖨 Contrato</button>`}
+    </div>` : ''}
     ${r ? `
     <div style="background:var(--bg2);border-radius:var(--radius-sm);padding:12px 16px;font-size:13px">
       <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px">
@@ -4641,6 +4685,88 @@ function docsSecReimpresion(r){
         <div><span style="color:var(--text2);font-size:11px;display:block">Tipo</span><strong>${(r.tipo||'—').toUpperCase()}</strong></div>
       </div>
     </div>` : '<div style="color:var(--text2);font-size:13px;padding:10px 0">Busca y selecciona un colaborador para reimprimir su alta.</div>'}
+  </div>`;
+}
+
+
+// ── v12.0.26 Sección: Contratos (todos los expedientes, para reimprimir) ──
+window._ctrFiltro = window._ctrFiltro || {q:'', tipo:'', desde:'', hasta:''};
+function _ctrLista(){
+  const f=window._ctrFiltro||{};
+  const q=(f.q||'').toLowerCase().trim();
+  return db.map((r,i)=>({r,i}))
+    .filter(({r})=>r && r.nombre)
+    .filter(({r})=>!q || [r.nombre,fmtNom(r.numNomina),String(r.numNomina||''),r.puesto,r.oficina].some(x=>String(x||'').toLowerCase().includes(q)))
+    .filter(({r})=>!f.tipo || (f.tipo==='temporal' ? r.tipo==='temporal' : r.tipo!=='temporal'))
+    .filter(({r})=>!f.desde || String(r.fechaIngreso||'')>=f.desde)
+    .filter(({r})=>!f.hasta || String(r.fechaIngreso||'')<=f.hasta)
+    .sort((a,b)=>String(b.r.fechaIngreso||'').localeCompare(String(a.r.fechaIngreso||'')));
+}
+function _ctrFilas(){
+  const lista=_ctrLista();
+  const cnt=document.getElementById('ctr-count'); if(cnt) cnt.textContent=lista.length+' de '+db.filter(r=>r&&r.nombre).length+' expedientes';
+  if(!lista.length) return '<tr><td colspan="7" style="text-align:center;padding:20px;color:var(--text2)">Sin resultados</td></tr>';
+  const tipoLbl={semanal:'Semanal',quincenal:'Quincenal',gerencia:'Gerencia',temporal:'Temporal'};
+  const bs='font-size:11px;padding:4px 10px;border-radius:4px;border:1px solid var(--border);background:#eef3fb;color:var(--afimex-blue);font-weight:600;cursor:pointer;margin:2px';
+  return lista.map(({r,i},k)=>`
+    <tr style="background:${k%2===0?'white':'var(--bg2)'}">
+      <td style="padding:7px 10px;border-bottom:1px solid var(--border);font-weight:600;color:var(--afimex-blue)">${fmtNom(r.numNomina)||'—'}</td>
+      <td style="padding:7px 10px;border-bottom:1px solid var(--border);font-weight:600">${r.nombre}</td>
+      <td style="padding:7px 10px;border-bottom:1px solid var(--border)">${r.puesto||'—'}</td>
+      <td style="padding:7px 10px;border-bottom:1px solid var(--border)">${r.oficina||'—'}</td>
+      <td style="padding:7px 10px;border-bottom:1px solid var(--border)">${tipoLbl[r.tipo]||r.tipo||'—'}</td>
+      <td style="padding:7px 10px;border-bottom:1px solid var(--border);white-space:nowrap">${r.fechaIngreso?String(r.fechaIngreso).split('-').reverse().join('/'):'—'}</td>
+      <td style="padding:5px 10px;border-bottom:1px solid var(--border);text-align:right;white-space:nowrap">
+        ${r.tipo==='temporal' ? `
+          <button style="${bs}" onclick="printContratoTemporal(db[${i}])">🖨 Contrato Temporal</button>
+          <button style="${bs}" onclick="printSolicitudTD(db[${i}])">🖨 Solicitud TD</button>
+          <button style="${bs}" onclick="printAdendum(db[${i}])">🖨 Adendum</button>`
+        : `<button style="${bs}" onclick="printContratoSemanal(db[${i}])">🖨 Contrato</button>`}
+      </td>
+    </tr>`).join('');
+}
+function ctrFiltrar(campo, valor){
+  window._ctrFiltro[campo]=valor;
+  const tb=document.getElementById('ctr-tbody'); if(tb) tb.innerHTML=_ctrFilas();
+}
+function docsSecContratos(){
+  const f=window._ctrFiltro||{};
+  const inp='padding:7px 10px;border:1.5px solid var(--border);border-radius:var(--radius-sm);font-size:13px';
+  setTimeout(()=>{ const tb=document.getElementById('ctr-tbody'); if(tb) tb.innerHTML=_ctrFilas(); },0);
+  return `
+  <div style="background:white;border:1px solid var(--border);border-radius:var(--radius);padding:18px">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+      <div>
+        <div style="font-size:14px;font-weight:700;color:var(--afimex-blue)">Contratos Generados</div>
+        <div style="font-size:12px;color:var(--text2);margin-top:2px">Todos los expedientes dados de alta · reimprime el contrato que necesites</div>
+      </div>
+      <span id="ctr-count" style="font-size:12px;color:var(--text2);font-weight:600"></span>
+    </div>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:12px">
+      <div style="flex:1;min-width:220px"><label style="font-size:11px;font-weight:600;color:var(--text2);display:block;margin-bottom:4px">BUSCAR</label>
+        <input type="text" value="${(f.q||'').replace(/"/g,'&quot;')}" placeholder="Nombre, nómina, puesto u oficina…" oninput="ctrFiltrar('q',this.value)" style="${inp};width:100%"></div>
+      <div><label style="font-size:11px;font-weight:600;color:var(--text2);display:block;margin-bottom:4px">TIPO</label>
+        <select onchange="ctrFiltrar('tipo',this.value)" style="${inp}">
+          <option value="" ${!f.tipo?'selected':''}>Todos</option>
+          <option value="indeterminado" ${f.tipo==='indeterminado'?'selected':''}>Indeterminado</option>
+          <option value="temporal" ${f.tipo==='temporal'?'selected':''}>Temporal</option>
+        </select></div>
+      <div><label style="font-size:11px;font-weight:600;color:var(--text2);display:block;margin-bottom:4px">INGRESO DESDE</label>
+        <input type="date" value="${f.desde||''}" onchange="ctrFiltrar('desde',this.value)" style="${inp}"></div>
+      <div><label style="font-size:11px;font-weight:600;color:var(--text2);display:block;margin-bottom:4px">INGRESO HASTA</label>
+        <input type="date" value="${f.hasta||''}" onchange="ctrFiltrar('hasta',this.value)" style="${inp}"></div>
+    </div>
+    <div style="overflow:auto;max-height:560px;border:1px solid var(--border);border-radius:var(--radius-sm)">
+      <table style="width:100%;border-collapse:collapse;font-size:12px">
+        <thead><tr style="background:var(--afimex-blue);color:white;position:sticky;top:0">
+          <th style="padding:8px 10px;text-align:left">Nóm.</th><th style="padding:8px 10px;text-align:left">Nombre</th>
+          <th style="padding:8px 10px;text-align:left">Puesto</th><th style="padding:8px 10px;text-align:left">Oficina</th>
+          <th style="padding:8px 10px;text-align:left">Tipo</th><th style="padding:8px 10px;text-align:left">F. Ingreso</th>
+          <th style="padding:8px 10px;text-align:right">Reimprimir</th>
+        </tr></thead>
+        <tbody id="ctr-tbody"></tbody>
+      </table>
+    </div>
   </div>`;
 }
 
@@ -4833,6 +4959,8 @@ function docsSelectColaborador(r){
     selDiv.innerHTML = '<span style="font-weight:700">✓ '+r.nombre+' &nbsp;·&nbsp; #'+r.numNomina+' &nbsp;·&nbsp; '+(r.puesto||'')+' &nbsp;·&nbsp; '+(r.oficina||'')+'</span>'
       +'<button onclick="docsClearSelection()" style="background:rgba(255,255,255,.2);border:none;color:white;cursor:pointer;border-radius:4px;padding:2px 8px;font-size:12px;margin-left:auto">✕</button>';
   }
+  // v12.0.27: refrescar la sección Reimprimir (datos + botones de contrato)
+  { const el=document.getElementById('docs-sec-reimpresion'); if(el) el.outerHTML=docsSecReimpresion(r); }
   // Habilitar botones directamente en DOM
   ['docs-btn-politicas','docs-btn-gafete','docs-btn-reimpresion'].forEach(function(id){
     const btn = document.getElementById(id);
@@ -4852,6 +4980,7 @@ function docsClearSelection(){
   if(resultsDiv) resultsDiv.innerHTML = '';
   const selDiv = document.getElementById('docs-selected');
   if(selDiv) selDiv.style.display = 'none';
+  { const el=document.getElementById('docs-sec-reimpresion'); if(el) el.outerHTML=docsSecReimpresion(null); }
   docsRefreshButtons(null);
 }
 
@@ -8822,7 +8951,7 @@ async function sincronizarPendientesAhora(){
         const cb='_cb_pen_'+Date.now();
         const sc=document.createElement('script');
         sc.src=GS_URL+'?action=getData&sheets=Pendientes&callback='+cb;
-        window[cb]=d=>{delete window[cb];sc.remove();res(d);};
+        window[cb]=d=>{delete window[cb];sc.remove();res(normalizarFechasISO(d));};
         sc.onerror=()=>{delete window[cb];sc.remove();rej();};
         setTimeout(()=>{delete window[cb];sc.remove();rej();},10000);
         document.head.appendChild(sc);
