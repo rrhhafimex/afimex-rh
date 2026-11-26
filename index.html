@@ -167,7 +167,7 @@ input.field-ok { border-color: #16a34a; background: #f0fdf4; }
     <div style="display:flex;align-items:center;gap:12px">
       <div>
         <div class="topbar-title">AFIMEX PEOPLE</div>
-        <div class="topbar-sub">V 12.0.27 | Recursos Humanos</div>
+        <div class="topbar-sub">V 12.0.28 | Recursos Humanos</div>
       </div>
     </div>
     <div style="position:absolute;left:50%;transform:translateX(-50%)">
@@ -4509,13 +4509,13 @@ function docsHTML(){
   const qd = window._docsQuery||'';
   const resultados = buscarColabDocs(qd);
   const sel = window._docsSelected||null; // record seleccionado
+  if(window._docsSection==='contratos') window._docsSection='reimpresion'; // v12.0.28: pestañas unificadas
   const activeSection = window._docsSection||'politicas';
 
   const secciones = [
     {id:'politicas', label:'📄 Políticas para Firma'},
     {id:'gafete',    label:'🪪 Gafete'},
     {id:'reimpresion', label:'🖨 Reimprimir Alta y Contrato'},
-    {id:'contratos', label:'📑 Contratos'},
   ];
 
   return `
@@ -4546,7 +4546,6 @@ function docsHTML(){
     ${activeSection==='politicas' ? docsSecPoliticas(sel) : ''}
     ${activeSection==='gafete'    ? docsSecGafete(sel)    : ''}
     ${activeSection==='reimpresion' ? docsSecReimpresion(sel) : ''}
-    ${activeSection==='contratos' ? docsSecContratos() : ''}
   </div>`;
 }
 
@@ -4653,7 +4652,8 @@ function docsSecGafete(r){
 }
 
 // ── Sección: Reimprimir Alta ─────────────────────────────────────
-function docsSecReimpresion(r){
+function docsSecReimpresion(r){ return docsSecContratos(); }
+function _docsSecReimpresionAnterior(r){
   return `
   <div id="docs-sec-reimpresion" style="background:white;border:1px solid var(--border);border-radius:var(--radius);padding:18px">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
@@ -4722,6 +4722,7 @@ function _ctrFilas(){
           <button style="${bs}" onclick="printSolicitudTD(db[${i}])">🖨 Solicitud TD</button>
           <button style="${bs}" onclick="printAdendum(db[${i}])">🖨 Adendum</button>`
         : `<button style="${bs}" onclick="printContratoSemanal(db[${i}])">🖨 Contrato</button>`}
+          <button style="${bs};background:var(--afimex-blue);color:white;border-color:var(--afimex-blue)" onclick="printAlta(db[${i}])">🖨 Alta</button>
       </td>
     </tr>`).join('');
 }
@@ -4737,14 +4738,14 @@ function docsSecContratos(){
   <div style="background:white;border:1px solid var(--border);border-radius:var(--radius);padding:18px">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
       <div>
-        <div style="font-size:14px;font-weight:700;color:var(--afimex-blue)">Contratos Generados</div>
-        <div style="font-size:12px;color:var(--text2);margin-top:2px">Todos los expedientes dados de alta · reimprime el contrato que necesites</div>
+        <div style="font-size:14px;font-weight:700;color:var(--afimex-blue)">Reimprimir Alta y Contrato</div>
+        <div style="font-size:12px;color:var(--text2);margin-top:2px">Todos los expedientes · <b>Alta</b> imprime alta, etiqueta y checklist de expediente; el contrato se imprime con su propio botón</div>
       </div>
       <span id="ctr-count" style="font-size:12px;color:var(--text2);font-weight:600"></span>
     </div>
     <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:12px">
       <div style="flex:1;min-width:220px"><label style="font-size:11px;font-weight:600;color:var(--text2);display:block;margin-bottom:4px">BUSCAR</label>
-        <input type="text" value="${(f.q||'').replace(/"/g,'&quot;')}" placeholder="Nombre, nómina, puesto u oficina…" oninput="ctrFiltrar('q',this.value)" style="${inp};width:100%"></div>
+        <input id="ctr-q" type="text" value="${(f.q||'').replace(/"/g,'&quot;')}" placeholder="Nombre, nómina, puesto u oficina…" oninput="ctrFiltrar('q',this.value)" style="${inp};width:100%"></div>
       <div><label style="font-size:11px;font-weight:600;color:var(--text2);display:block;margin-bottom:4px">TIPO</label>
         <select onchange="ctrFiltrar('tipo',this.value)" style="${inp}">
           <option value="" ${!f.tipo?'selected':''}>Todos</option>
@@ -4960,7 +4961,8 @@ function docsSelectColaborador(r){
       +'<button onclick="docsClearSelection()" style="background:rgba(255,255,255,.2);border:none;color:white;cursor:pointer;border-radius:4px;padding:2px 8px;font-size:12px;margin-left:auto">✕</button>';
   }
   // v12.0.27: refrescar la sección Reimprimir (datos + botones de contrato)
-  { const el=document.getElementById('docs-sec-reimpresion'); if(el) el.outerHTML=docsSecReimpresion(r); }
+  // v12.0.28: si está abierta la lista de reimpresión, filtrarla al colaborador elegido
+  { const q=document.getElementById('ctr-q'); if(q){ q.value=r.nombre; ctrFiltrar('q', r.nombre); } }
   // Habilitar botones directamente en DOM
   ['docs-btn-politicas','docs-btn-gafete','docs-btn-reimpresion'].forEach(function(id){
     const btn = document.getElementById(id);
@@ -4980,7 +4982,7 @@ function docsClearSelection(){
   if(resultsDiv) resultsDiv.innerHTML = '';
   const selDiv = document.getElementById('docs-selected');
   if(selDiv) selDiv.style.display = 'none';
-  { const el=document.getElementById('docs-sec-reimpresion'); if(el) el.outerHTML=docsSecReimpresion(null); }
+  { const q=document.getElementById('ctr-q'); if(q){ q.value=''; ctrFiltrar('q',''); } }
   docsRefreshButtons(null);
 }
 
